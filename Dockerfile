@@ -44,8 +44,10 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Generate Prisma client (typed) — required before TS compile
-RUN pnpm exec prisma generate
+# Generate Prisma client (typed) — required before TS compile.
+# DATABASE_URL is not available at build time, so we signal the Prisma
+# config to skip the runtime URL check.
+RUN PRISMA_GENERATE_BUILD=1 pnpm exec prisma generate
 
 # Compile TypeScript → dist/
 RUN pnpm run build
@@ -68,11 +70,12 @@ WORKDIR /app
 ENV NODE_ENV=production \
     PORT=3000
 
-# Copy built artifacts + pruned deps + schema (for migrate deploy)
+# Copy built artifacts + pruned deps + schema + prisma config (for migrate deploy)
 COPY --chown=nestjs:nodejs --from=builder /app/dist ./dist
 COPY --chown=nestjs:nodejs --from=builder /app/node_modules ./node_modules
 COPY --chown=nestjs:nodejs --from=builder /app/package.json ./package.json
 COPY --chown=nestjs:nodejs --from=builder /app/prisma ./prisma
+COPY --chown=nestjs:nodejs --from=builder /app/prisma.config.ts ./prisma.config.ts
 
 USER nestjs
 

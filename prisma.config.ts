@@ -3,14 +3,27 @@ import { config } from 'dotenv';
 import { defineConfig } from 'prisma/config';
 
 // Load .env for local CLI invocations (migrate, studio, etc.).
-// In Docker builds there is no .env; DATABASE_URL is provided at runtime.
+// In production, DATABASE_URL is provided directly by the platform.
 config();
 
-// Placeholder used only at build time (`prisma generate`), which doesn't
-// connect to the DB. Real runtime migrations use the actual env var
-// provided by the deployment platform (Render, etc.).
+// Prisma 7 requires `datasource.url` to be present in this config file
+// (it can no longer live in `schema.prisma`). At build time (`prisma generate`)
+// the URL is unused, so we fall back to a placeholder to keep the build happy.
+// At runtime (`prisma migrate deploy`), the real DATABASE_URL must be provided
+// by the deployment platform (Render, Railway, etc.) — if it's missing, we
+// fail loudly instead of silently using the placeholder.
+const runtimeUrl = process.env['DATABASE_URL'];
+const isBuildTime = process.env['PRISMA_GENERATE_BUILD'] === '1';
+
+if (!runtimeUrl && !isBuildTime) {
+  throw new Error(
+    'DATABASE_URL is not set. Configure it in your deployment platform ' +
+      '(Render Environment tab) or in .env for local development.',
+  );
+}
+
 const databaseUrl =
-  process.env['DATABASE_URL'] ??
+  runtimeUrl ??
   'postgresql://placeholder:placeholder@placeholder:5432/placeholder';
 
 export default defineConfig({
