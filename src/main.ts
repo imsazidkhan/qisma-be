@@ -118,6 +118,7 @@ multi-layer rate limiting, idempotency, and audit trails.
     .setVersion('1.0')
     .setContact('Veloraq', 'https://veloraq.com', 'support@veloraq.com')
     .setLicense('MIT', 'https://opensource.org/licenses/MIT')
+    .addServer('https://api.veloraq.co', 'Production')
     .addServer('http://localhost:3000', 'Local development')
     .addBearerAuth(
       {
