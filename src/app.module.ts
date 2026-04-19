@@ -10,6 +10,7 @@ import { UserModule } from './modules/user/user.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { validateEnv } from './config/env.schema.js';
 import { buildLoggerConfig } from './config/logger.config.js';
+import { RootController } from './modules/root/root.controller.js';
 
 @Module({
   imports: [
@@ -32,7 +33,7 @@ import { buildLoggerConfig } from './config/logger.config.js';
     OtpModule,
     HealthModule,
   ],
-  controllers: [],
+  controllers: [RootController],
   providers: [],
 })
 export class AppModule {}

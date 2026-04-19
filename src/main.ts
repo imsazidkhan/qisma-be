@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { Logger } from 'nestjs-pino';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module.js';
@@ -22,7 +22,11 @@ async function bootstrap() {
   //   4. Exit cleanly
   app.enableShutdownHooks();
 
-  app.setGlobalPrefix('v1');
+  // All API routes live under /v1 (versioning).
+  // Exclude the root welcome route so GET / keeps working.
+  app.setGlobalPrefix('v1', {
+    exclude: [{ path: '/', method: RequestMethod.GET }],
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({
