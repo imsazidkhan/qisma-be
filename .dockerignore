@@ -1,0 +1,55 @@
+# ─── Build artifacts ─────────────────────────────────────────
+node_modules
+dist
+coverage
+.tsbuildinfo
+*.tsbuildinfo
+
+# ─── Secrets (NEVER ship .env into image) ────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── Version control ─────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+
+# ─── IDE / OS ────────────────────────────────────────────────
+.vscode
+.idea
+.cursor
+.DS_Store
+*.swp
+*.swo
+
+# ─── Logs ────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs
+
+# ─── Tests & docs ────────────────────────────────────────────
+test
+**/*.spec.ts
+**/*.test.ts
+**/__tests__
+README.md
+docs
+
+# ─── Docker itself ───────────────────────────────────────────
+Dockerfile
+Dockerfile.*
+.dockerignore
+docker-compose*.yml
+
+# ─── CI ──────────────────────────────────────────────────────
+.github
+.gitlab-ci.yml
+.circleci
+
+# ─── Misc ────────────────────────────────────────────────────
+*.md
+!prisma/README.md
