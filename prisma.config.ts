@@ -16,10 +16,13 @@ const runtimeUrl = process.env['DATABASE_URL'];
 const isBuildTime = process.env['PRISMA_GENERATE_BUILD'] === '1';
 
 if (!runtimeUrl && !isBuildTime) {
-  throw new Error(
+  const msg =
     'DATABASE_URL is not set. Configure it in your deployment platform ' +
-      '(Render Environment tab) or in .env for local development.',
-  );
+    '(Render Environment tab) or in .env for local development.';
+  // Force-flush to stderr so the platform log stream captures it before
+  // Prisma CLI wraps/suppresses the error in its own message.
+  process.stderr.write(`\n[prisma.config] FATAL: ${msg}\n\n`);
+  throw new Error(msg);
 }
 
 const databaseUrl =

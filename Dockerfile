@@ -52,8 +52,11 @@ RUN PRISMA_GENERATE_BUILD=1 pnpm exec prisma generate
 # Compile TypeScript → dist/
 RUN pnpm run build
 
-# Prune dev dependencies → smaller runtime stage
-RUN pnpm prune --prod
+# NOTE: we intentionally do NOT run `pnpm prune --prod` here.
+# Pruning removes `prisma` (a devDependency) which we need at runtime
+# for `prisma migrate deploy`. Re-downloading it via `npx` on every
+# container start adds 30-60s and a network dependency to every deploy.
+# The ~50MB size cost is worth the reliability + startup speed gain.
 
 # ═════════════════════════════════════════════════════════════════════
 # Stage 3: runner — minimal runtime image
@@ -87,5 +90,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD wget --quiet --tries=1 --spider http://localhost:${PORT}/v1/health || exit 1
 
 # Run migrations then start the server.
-# Safe in production because `migrate deploy` only applies pending migrations.
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main"]
+# - Explicit echo markers make failures visible in platform logs
+#   (Render/Fly/etc. sometimes drop buffered output on crash).
+# - `exec` replaces the shell with node so SIGTERM/SIGINT reach the app.
+# - `migrate deploy` is idempotent — safe to run on every start.
+CMD ["sh", "-c", "echo '[boot] running prisma migrate deploy...' && ./node_modules/.bin/prisma migrate deploy && echo '[boot] starting nest app...' && exec node dist/main"]
