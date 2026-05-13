@@ -1,7 +1,7 @@
 import { Controller, Get, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
-import { PrismaService } from '../../infrastructure/database/prisma.service.js';
-import { RedisService } from '../../infrastructure/redis/redis.service.js';
+import { PrismaService } from '../../infrastructure/database/prisma.service';
+import { RedisService } from '../../infrastructure/redis/redis.service';
 
 interface HealthCheck {
   status: 'ok' | 'degraded';

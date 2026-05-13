@@ -108,6 +108,50 @@ export class IpRateLimitedException extends ApiException {
   }
 }
 
+/** \`POST /v1/contacts/sync\` — per-user hourly quota exceeded. */
+export class ContactsSyncUserRateLimitedException extends ApiException {
+  constructor(retryAfter?: number) {
+    const message = retryAfter
+      ? `Contact sync rate limit exceeded. Try again after ${retryAfter} seconds.`
+      : 'Contact sync rate limit exceeded for this account. Try again later.';
+    super(
+      'CONTACT_SYNC_RATE_LIMIT_USER',
+      message,
+      HttpStatus.TOO_MANY_REQUESTS,
+      retryAfter,
+    );
+  }
+}
+
+/** \`POST /v1/contacts/sync\` — per-IP hourly quota exceeded. */
+export class ContactsSyncIpRateLimitedException extends ApiException {
+  constructor(retryAfter?: number) {
+    const message = retryAfter
+      ? `Too many contact sync requests from this network. Try again after ${retryAfter} seconds.`
+      : 'Too many contact sync requests from this network. Try again later.';
+    super(
+      'CONTACT_SYNC_RATE_LIMIT_IP',
+      message,
+      HttpStatus.TOO_MANY_REQUESTS,
+      retryAfter,
+    );
+  }
+}
+
+/** Uploaded contact row could not be parsed into a valid E.164 subscriber number. */
+export class ContactPhonesNormalizeException extends ApiException {
+  constructor(
+    index: number,
+    message = 'could not be parsed as a valid E.164 phone number',
+  ) {
+    super(
+      'INVALID_CONTACT_PHONE',
+      `Contact at index ${String(index)} ${message}`,
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+}
+
 export class VerifyRateLimitedException extends ApiException {
   constructor(retryAfter?: number) {
     const message = retryAfter
@@ -158,6 +202,143 @@ export class IdempotencyConflictException extends ApiException {
       'A request with this Idempotency-Key is already being processed.',
       HttpStatus.CONFLICT,
     );
+  }
+}
+
+/** Profile / user resource */
+export class UserNotFoundException extends ApiException {
+  constructor(message = 'User not found.') {
+    super('USER_NOT_FOUND', message, HttpStatus.NOT_FOUND);
+  }
+}
+
+export class AccountInactiveException extends ApiException {
+  constructor(message = 'This account is inactive.') {
+    super('ACCOUNT_INACTIVE', message, HttpStatus.FORBIDDEN);
+  }
+}
+
+export class InvalidDisplayNameException extends ApiException {
+  constructor(message = 'Display name is invalid.') {
+    super('DISPLAY_NAME_INVALID', message, HttpStatus.BAD_REQUEST);
+  }
+}
+
+/** Group resource (ownership enforced in service layer). */
+export class GroupNotFoundException extends ApiException {
+  constructor(message = 'Group not found.') {
+    super('GROUP_NOT_FOUND', message, HttpStatus.NOT_FOUND);
+  }
+}
+
+/** `Expense.id` not found or soft-deleted (when filtered). */
+export class ExpenseNotFoundException extends ApiException {
+  constructor(message = 'Expense not found.') {
+    super('EXPENSE_NOT_FOUND', message, HttpStatus.NOT_FOUND);
+  }
+}
+
+/** Split payload inconsistent with **splitType** or invariants. */
+export class ExpenseSplitValidationException extends ApiException {
+  constructor(message: string) {
+    super('SPLIT_VALIDATION_ERROR', message, HttpStatus.BAD_REQUEST);
+  }
+}
+
+/** **PATCH** failed because **expectedUpdatedAt** does not match the stored row. */
+export class ExpenseStaleVersionException extends ApiException {
+  constructor(message = 'Expense was modified by another client. Refresh and try again.') {
+    super('EXPENSE_STALE_VERSION', message, HttpStatus.CONFLICT);
+  }
+}
+
+/** Opaque **cursor** for **GET …/expenses** feed is malformed or expired. */
+export class ExpenseInvalidCursorException extends ApiException {
+  constructor(message = 'Invalid pagination cursor.') {
+    super('INVALID_EXPENSE_CURSOR', message, HttpStatus.BAD_REQUEST);
+  }
+}
+
+/** Caller is not an active member of this group (or invite still pending). */
+export class NotGroupMemberException extends ApiException {
+  constructor(message = 'You are not an active member of this group.') {
+    super('NOT_GROUP_MEMBER', message, HttpStatus.FORBIDDEN);
+  }
+}
+
+/** Caller must have `admin` or `owner` role (membership RBAC). */
+export class GroupAdminRequiredException extends ApiException {
+  constructor(
+    message = 'You must be a group admin or owner to perform this action.',
+  ) {
+    super('GROUP_ADMIN_REQUIRED', message, HttpStatus.FORBIDDEN);
+  }
+}
+
+/** Caller must have `owner` role (destructive actions, ownership transfer prep). */
+export class GroupOwnerRequiredException extends ApiException {
+  constructor(message = 'You must be the group owner to perform this action.') {
+    super('GROUP_OWNER_REQUIRED', message, HttpStatus.FORBIDDEN);
+  }
+}
+
+/** Duplicate membership violates unique `(groupId, userId)`. */
+export class GroupMemberConflictException extends ApiException {
+  constructor(message = 'This user is already a member of the group.') {
+    super('ALREADY_GROUP_MEMBER', message, HttpStatus.CONFLICT);
+  }
+}
+
+/** A pending invite already exists for this user in this group. */
+export class InviteAlreadyPendingException extends ApiException {
+  constructor(message = 'A pending invitation already exists for this user.') {
+    super('INVITE_ALREADY_PENDING', message, HttpStatus.CONFLICT);
+  }
+}
+
+/** Accept/decline called when the row exists but is not \`pending\` (or wrong state). */
+export class GroupInviteNotPendingException extends ApiException {
+  constructor(message = 'There is no pending invitation for this group.') {
+    super('GROUP_INVITE_NOT_PENDING', message, HttpStatus.BAD_REQUEST);
+  }
+}
+
+/** \`GET …/invite-preview\` requires your membership to still be **\`pending\`**. Active members must use roster APIs after joining. */
+export class GroupInvitePreviewNotPendingException extends ApiException {
+  constructor(
+    message = 'Preview is available only before you accept the invite.',
+  ) {
+    super('GROUP_INVITE_PREVIEW_NOT_PENDING', message, HttpStatus.FORBIDDEN);
+  }
+}
+
+/** Caller cannot invite their own account. */
+export class InviteSelfForbiddenException extends ApiException {
+  constructor(message = 'You cannot add yourself as a member.') {
+    super('INVITE_SELF', message, HttpStatus.BAD_REQUEST);
+  }
+}
+
+/** No `group_members` row for this user + group pair. */
+export class GroupMemberNotFoundException extends ApiException {
+  constructor(message = 'That user is not a member of this group.') {
+    super('GROUP_MEMBER_NOT_FOUND', message, HttpStatus.NOT_FOUND);
+  }
+}
+
+/** Removing the owner membership is not allowed via remove-member (use delete group / future transfer). */
+export class GroupOwnerProtectedException extends ApiException {
+  constructor(
+    message = 'The group owner cannot be removed in this way. Delete the group or transfer ownership.',
+  ) {
+    super('GROUP_OWNER_PROTECTED', message, HttpStatus.FORBIDDEN);
+  }
+}
+
+/** Only owners may remove another active admin from the group. */
+export class AdminRemoveRequiresOwnerException extends ApiException {
+  constructor(message = 'Only the group owner can remove another admin.') {
+    super('ADMIN_REMOVE_REQUIRES_OWNER', message, HttpStatus.FORBIDDEN);
   }
 }
 

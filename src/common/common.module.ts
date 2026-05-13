@@ -1,7 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
-import { IdempotencyService } from './services/idempotency.service.js';
-import { HttpExceptionFilter } from './filters/http-exception.filter.js';
+import { IdempotencyService } from './services/idempotency.service';
+import { HttpExceptionFilter } from './filters/http-exception.filter';
 
 @Global()
 @Module({

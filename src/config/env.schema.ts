@@ -9,12 +9,60 @@ import { z } from 'zod';
  * This catches deploy misconfigurations (wrong Neon URL, missing JWT secret,
  * etc.) immediately at startup instead of at the first request.
  */
-export const envSchema = z.object({
+const envShape = z.object({
   // ─── Runtime ─────────────────────────────────────────────────
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
     .default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
+
+  // ─── HTTP / CORS (browsers: Expo Web, SPA on another origin) ─
+  /** Comma-separated allowed `Origin` values. If unset, any origin is reflected (dev-friendly). */
+  CORS_ORIGINS: z.string().optional(),
+  /**
+   * When `true`, Express **trust proxy** is enabled (one hop) so **`req.ip` / `@Ip()`** use
+   * **`X-Forwarded-For`** behind a load balancer — required for meaningful **per-IP** limits on
+   * **`POST /v1/contacts/sync`** (and OTP IP limits).
+   */
+  TRUST_PROXY: z.enum(['true', 'false']).default('false'),
+  /**
+   * Optional public origin for absolute file URLs in upload responses, e.g.
+   * `https://api.example.com`. If unset, upload responses use `Host` (+ optional
+   * `X-Forwarded-*` when behind a reverse proxy).
+   */
+  PUBLIC_APP_URL: z.string().url().optional(),
+
+  /**
+   * Receipt / expense attachment storage: **`local`** (disk under `uploads/receipts/`) or **`s3`**
+   * (S3-compatible API — **AWS S3**, **Cloudflare R2**, MinIO, …).
+   */
+  RECEIPT_STORAGE: z.enum(['local', 's3']).default('local'),
+  /** Max receipt upload size in bytes (multipart **file**). Default **10 MB** if unset. */
+  RECEIPT_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(20 * 1024 * 1024)
+    .optional(),
+  /** S3-compatible bucket (R2: bucket name in dashboard). Required when **RECEIPT_STORAGE=s3**. */
+  S3_BUCKET: z.string().min(1).optional(),
+  /**
+   * Region label for SigV4. R2 often uses **`auto`**.
+   * @see https://developers.cloudflare.com/r2/examples/aws/aws-sdk-js-v3/
+   */
+  S3_REGION: z.string().min(1).default('auto'),
+  /**
+   * Custom S3 API endpoint for **R2** / MinIO, e.g.
+   * `https://<account_id>.r2.cloudflarestorage.com`
+   */
+  S3_ENDPOINT: z.string().url().optional(),
+  S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+  S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  /**
+   * Public base URL for objects after upload (no trailing slash).
+   * R2: your public bucket domain or **r2.dev** / custom domain; AWS: CloudFront or `https://bucket.s3.region.amazonaws.com` style origin.
+   */
+  S3_PUBLIC_BASE_URL: z.string().url().optional(),
 
   // ─── Database ────────────────────────────────────────────────
   DATABASE_URL: z
@@ -51,9 +99,40 @@ export const envSchema = z.object({
       (v) => !v.includes('change-in-production'),
       'JWT_REFRESH_SECRET still contains the default placeholder — set a real secret',
     ),
+
+  /**
+   * ISO 3166-1 alpha-2 default region for **`POST /v1/contacts/sync`** when uploaded
+   * numbers omit country code **and** the caller’s stored `identifier` isn’t usable to infer region.
+   * Example: `IN`, `US`, `BD`.
+   */
+  CONTACT_SYNC_DEFAULT_COUNTRY: z
+    .string()
+    .length(2, 'Must be ISO 3166-1 alpha-2 (e.g. IN, US)')
+    .regex(/^[A-Za-z]{2}$/, 'Must be ASCII letters')
+    .transform((c) => c.toUpperCase())
+    .optional(),
 });
 
-export type EnvConfig = z.infer<typeof envSchema>;
+export const envSchema = envShape.refine(
+  (data) => {
+    if (data.RECEIPT_STORAGE !== 's3') {
+      return true;
+    }
+    return Boolean(
+      data.S3_BUCKET &&
+        data.S3_ACCESS_KEY_ID &&
+        data.S3_SECRET_ACCESS_KEY &&
+        data.S3_PUBLIC_BASE_URL,
+    );
+  },
+  {
+    message:
+      'When RECEIPT_STORAGE is s3, set S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, and S3_PUBLIC_BASE_URL (and S3_ENDPOINT for R2/MinIO).',
+    path: ['RECEIPT_STORAGE'],
+  },
+);
+
+export type EnvConfig = z.infer<typeof envShape>;
 
 /**
  * Validation function consumed by `ConfigModule.forRoot({ validate })`.
@@ -69,7 +148,6 @@ export function validateEnv(raw: Record<string, unknown>): EnvConfig {
       .map((i) => `  • ${i.path.join('.')}: ${i.message}`)
       .join('\n');
 
-    // eslint-disable-next-line no-console
     console.error(
       `\n❌ Invalid environment configuration:\n${issues}\n\n` +
         `Fix the above in your .env file (or deployment env vars) and restart.\n`,

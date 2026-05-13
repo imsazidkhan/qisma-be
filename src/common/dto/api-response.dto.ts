@@ -28,7 +28,8 @@ export class ApiErrorDto {
       },
       retryAfter: {
         type: 'number',
-        description: 'Seconds to wait before retrying (only on rate/cooldown errors)',
+        description:
+          'Seconds to wait before retrying (only on rate/cooldown errors)',
         example: 45,
         nullable: true,
       },

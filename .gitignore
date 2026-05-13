@@ -3,6 +3,12 @@
 /node_modules
 /build
 
+# pnpm content-addressable store (never commit)
+.pnpm-store/
+
+# Local uploads (avatars, receipts, etc.)
+/uploads/
+
 # Logs
 logs
 *.log

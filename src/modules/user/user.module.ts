@@ -1,9 +1,15 @@
 import { Global, Module } from '@nestjs/common';
-import { UserService } from './user.service.js';
+import { AuthModule } from '../auth/auth.module';
+import { GroupsModule } from '../groups/groups.module';
+import { UserRepository } from './repositories/user.repository';
+import { UsersController } from './users.controller';
+import { UserService } from './user.service';
 
 @Global()
 @Module({
-  providers: [UserService],
+  imports: [AuthModule, GroupsModule],
+  controllers: [UsersController],
+  providers: [UserRepository, UserService],
   exports: [UserService],
 })
 export class UserModule {}

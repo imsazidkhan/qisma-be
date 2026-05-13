@@ -94,4 +94,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 #   (Render/Fly/etc. sometimes drop buffered output on crash).
 # - `exec` replaces the shell with node so SIGTERM/SIGINT reach the app.
 # - `migrate deploy` is idempotent — safe to run on every start.
-CMD ["sh", "-c", "echo '[boot] running prisma migrate deploy...' && ./node_modules/.bin/prisma migrate deploy && echo '[boot] starting nest app...' && exec node dist/main"]
+CMD ["sh", "-c", "echo '[boot] running prisma migrate deploy...' && ./node_modules/.bin/prisma migrate deploy && echo '[boot] starting nest app...' && exec node dist/main.js"]

@@ -1,13 +1,13 @@
 import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { JsonWebTokenError, TokenExpiredError } from 'jsonwebtoken';
-import { TokenService } from '../services/token.service.js';
+import { TokenService } from '../services/token.service';
 import {
   UnauthorizedException,
   InvalidTokenException,
   TokenExpiredException,
   InvalidSignatureException,
   SessionRevokedException,
-} from '../../../common/exceptions/api.exception.js';
+} from '../../../common/exceptions/api.exception';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {

@@ -1,5 +1,7 @@
 # Veloraq Auth Service
 
+GitHub repository: [qisma-backend](https://github.com/imsazidkhan/qisma-backend).
+
 Production-grade OTP-based authentication microservice built with **NestJS**, **PostgreSQL**, and **Redis**.
 
 ---
@@ -56,8 +58,11 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 # 4. Apply database migrations
 npx prisma migrate deploy
 
-# 5. Start dev server
+# 5. Start dev server (`nest start --watch`; compiles on the fly)
 pnpm start:dev
+
+# Production-style run (requires a fresh build first)
+pnpm build && pnpm start:prod
 ```
 
 The app will be live at `http://localhost:3000`:
@@ -78,6 +83,10 @@ The app will be live at `http://localhost:3000`:
 | `GET` | `/v1/health` | Liveness + dependency status |
 
 See [Swagger docs](http://localhost:3000/docs) for complete request/response schemas and error codes.
+
+### Groups & invites (frontend)
+
+Product-level contract for envelopes, **`GET /v1/users/me/groups`** (home), **`active` / `pending`**, polling vs navigation, admin roster behaviour, and optional invite retention: **[docs/FE_GROUPS_INVITES_CONTRACT.md](docs/FE_GROUPS_INVITES_CONTRACT.md)**. Optional TypeScript/helpers: **`client-integration/group-invites/`**.
 
 ---
 
@@ -117,6 +126,7 @@ All three offer free tiers suitable for development and low-traffic production.
 | `REDIS_TLS` | No | `true` for Upstash / managed Redis |
 | `JWT_ACCESS_SECRET` | **Yes** | Min 32 chars, no default placeholder |
 | `JWT_REFRESH_SECRET` | **Yes** | Min 32 chars, must differ from access secret in production |
+| `CORS_ORIGINS` | No | Comma-separated browser `Origin` values (e.g. `http://localhost:8081` for Expo Web). If unset, the server reflects the request origin so local web clients are not blocked by CORS. Set explicitly in production. |
 
 App fails to boot if any required variable is missing or malformed — see `src/config/env.schema.ts`.
 

@@ -1,19 +1,33 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
-import { RedisModule } from './infrastructure/redis/redis.module.js';
-import { DatabaseModule } from './infrastructure/database/database.module.js';
-import { OtpModule } from './modules/otp/otp.module.js';
-import { CommonModule } from './common/common.module.js';
-import { AuthModule } from './modules/auth/auth.module.js';
-import { UserModule } from './modules/user/user.module.js';
-import { HealthModule } from './modules/health/health.module.js';
-import { validateEnv } from './config/env.schema.js';
-import { buildLoggerConfig } from './config/logger.config.js';
-import { RootController } from './modules/root/root.controller.js';
+import { RedisModule } from './infrastructure/redis/redis.module';
+import { DatabaseModule } from './infrastructure/database/database.module';
+import { OtpModule } from './modules/otp/otp.module';
+import { CommonModule } from './common/common.module';
+import { AuthModule } from './modules/auth/auth.module';
+import { UserModule } from './modules/user/user.module';
+import { HealthModule } from './modules/health/health.module';
+import { UploadModule } from './modules/upload/upload.module';
+import { validateEnv } from './config/env.schema';
+import { buildLoggerConfig } from './config/logger.config';
+import { RootController } from './modules/root/root.controller';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { ContactsModule } from './modules/contacts/contacts.module';
+import { ExpensesModule } from './modules/expenses/expenses.module';
+import { SplitsModule } from './modules/splits/splits.module';
 
 @Module({
   imports: [
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60_000,
+        limit: 200,
+      },
+    ]),
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
@@ -32,8 +46,19 @@ import { RootController } from './modules/root/root.controller.js';
     AuthModule,
     OtpModule,
     HealthModule,
+    UploadModule,
+    ContactsModule,
+    ScheduleModule.forRoot(),
+    AnalyticsModule,
+    SplitsModule,
+    ExpensesModule,
   ],
   controllers: [RootController],
-  providers: [],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}

@@ -6,9 +6,60 @@ datasource db {
   provider = "postgresql"
 }
 
+enum GroupMemberRole {
+  owner
+  admin
+  member
+}
+
+enum GroupMemberStatus {
+  active
+  pending
+}
+
+enum GroupInviteStatus {
+  pending
+  accepted
+  expired
+  revoked
+}
+
+enum GroupActivityEventType {
+  member_joined
+  invite_sent
+  invite_accepted
+  expense_classified
+  expense_reclassified
+  merchant_recognized
+  recurring_expense_detected
+}
+
+/// How **`classificationConfidence`** was produced (deterministic classifier).
+enum ExpenseClassificationSource {
+  system
+  user
+  keyword
+  merchant
+  historical_bonus
+}
+
 model User {
   id            String    @id @default(uuid())
+  /** Canonical verified phone (**E.164 subscriber**, digits only — same value used for OTP + contact sync **`IN`** match). */
   identifier    String    @unique
+  /** Optional public handle (`[a-z0-9_]`, unique); used for add-member lookup. */
+  username      String?   @unique
+  /** Display name from onboarding (PATCH /auth/me). Nullable until set. */
+  name          String?
+  /** Public HTTPS URL for profile image (set after POST /upload/avatar + PATCH /auth/me). */
+  avatarUrl     String?
+  /**
+   * Product use-case slug from onboarding Screen 3 (`PATCH /auth/me` `useCase`).
+   * One of `USER_USE_CASE_SLUGS` in application code.
+   */
+  useCase                 String?
+  /** Set once when client sends `onboardingCompleted: true` on final onboarding step. */
+  onboardingCompletedAt   DateTime?
   phoneVerified Boolean   @default(false)
   isActive      Boolean   @default(true)
   lastLoginAt   DateTime?
@@ -16,8 +67,381 @@ model User {
   updatedAt     DateTime  @updatedAt
 
   refreshTokens RefreshToken[]
+  groupsCreated Group[]
+  groupMembers GroupMember[] @relation("GroupMembership")
+  groupMembersAdded GroupMember[] @relation("GroupMembershipAddedBy")
+  groupInvitesSent GroupInvite[] @relation("GroupInviteInvitedBy")
+  groupActivitiesAsActor   GroupActivityEvent[] @relation("GroupActivityActor")
+  groupActivitiesAsSubject GroupActivityEvent[] @relation("GroupActivitySubject")
+  /** Phones the user synced from their device (`POST /v1/contacts/sync`); replaces prior snapshot each call. */
+  syncedContacts UserSyncedContact[]
+  expensesCreated  Expense[] @relation("ExpenseCreatedBy")
+  expensesPaid     Expense[] @relation("ExpensePaidBy")
+  expensePayerRows ExpensePayer[]
+  expenseParticipants ExpenseParticipant[]
+  expenseComments    ExpenseComment[] @relation("ExpenseCommentAuthor")
+  expenseReactions   ExpenseReaction[] @relation("ExpenseReactionUser")
+  activityLogEntries ActivityLog[]     @relation("ActivityLogActor")
 
   @@index([identifier])
+}
+
+/// Snapshot of synced device contacts (**digits-only**, same normalization as `User.identifier` / OTP).
+model UserSyncedContact {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phone     String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, phone])
+  @@index([userId])
+  @@map("user_synced_contacts")
+}
+
+model Group {
+  id              String   @id @default(uuid())
+  name            String
+  /** Product slug (e.g. \`trip\`). Validated in application code. */
+  type            String
+  /** Public image URL for the group (optional). */
+  avatarUrl       String?
+  createdByUserId String?
+  createdBy       User?    @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([createdByUserId])
+  @@index([type])
+  /** All memberships; deletes cascade from `group_members.groupId → Group.id`. */
+  members GroupMember[]
+  invites GroupInvite[]
+  activityEvents GroupActivityEvent[]
+  expenses       Expense[]
+  activityLogs   ActivityLog[]
+}
+
+/// Product catalog category (keywords power **keyword-matcher** + analytics rollups).
+model ExpenseCategory {
+  id          String               @id @default(uuid())
+  slug        String               @unique @db.VarChar(64)
+  name        String               @db.VarChar(128)
+  icon        String?              @db.VarChar(64)
+  /// Canonical **https** (or **http**) image URL for mobile; optional semantic **`icon`** remains for glyphs/emoji.
+  iconUrl     String?              @db.VarChar(2048)
+  color       String?              @db.VarChar(16)
+  keywords    String[]             @default([])
+  isActive    Boolean              @default(true)
+  sortOrder   Int                  @default(0)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  subcategories ExpenseSubcategory[]
+  expenses    Expense[]            @relation("ExpenseCategoryFk")
+  aliases     CategoryAlias[]
+
+  @@map("expense_categories")
+}
+
+model ExpenseSubcategory {
+  id         String          @id @default(uuid())
+  categoryId String
+  category   ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  slug       String          @db.VarChar(64)
+  name       String          @db.VarChar(128)
+  icon       String?         @db.VarChar(64)
+  iconUrl    String?         @db.VarChar(2048)
+  color      String?         @db.VarChar(16)
+  keywords   String[]        @default([])
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  expenses   Expense[]       @relation("ExpenseSubcategoryFk")
+  aliases    CategoryAlias[]
+
+  @@unique([categoryId, slug])
+  @@index([categoryId])
+  @@map("expense_subcategories")
+}
+
+model ExpenseTag {
+  id        String               @id @default(uuid())
+  slug      String               @unique @db.VarChar(64)
+  label     String               @db.VarChar(128)
+  color     String?              @db.VarChar(16)
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+  mappings  ExpenseTagMapping[]
+  @@map("expense_tags")
+}
+
+model ExpenseTagMapping {
+  expenseId String
+  tagId     String
+  expense   Expense    @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  tag       ExpenseTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+
+  @@id([expenseId, tagId])
+  @@index([tagId])
+  @@map("expense_tag_mappings")
+}
+
+/// Merchant normalization + deterministic hints (**categoryHints** JSON for optional default slugs).
+model ExpenseMerchant {
+  id             String    @id @default(uuid())
+  normalizedName String    @unique @db.VarChar(200)
+  displayName    String    @db.VarChar(200)
+  aliases        String[]  @default([])
+  categoryHints  Json      @default("{}")
+  logoUrl        String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  expenses       Expense[]
+  merchantAliases MerchantAlias[]
+  @@map("expense_merchants")
+}
+
+/// Join table: User ↔ Group with role and invite state (`group_members` in PostgreSQL).
+///
+/// **Constraints**
+/// - **Unique member:** `@@unique([groupId, userId])` — a user cannot have two memberships in the same group.
+/// - **Cascade on group delete:** `group.onDelete = Cascade` — deleting a `Group` removes all its `group_members` rows.
+///
+/// **Performance indexes:** `groupId`, `userId`, `role` (plus `addedByUserId`, `status` where useful).
+model GroupMember {
+  id              String             @id @default(uuid())
+  groupId         String
+  group           Group              @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User               @relation("GroupMembership", fields: [userId], references: [id], onDelete: Cascade)
+  role            GroupMemberRole
+  status          GroupMemberStatus
+  /** User who invited or added this member (null e.g. self-join / system bootstrap). */
+  addedByUserId   String?
+  addedBy         User?              @relation("GroupMembershipAddedBy", fields: [addedByUserId], references: [id], onDelete: SetNull)
+  joinedAt        DateTime?
+  createdAt       DateTime           @default(now())
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([userId])
+  @@index([role])
+  @@index([addedByUserId])
+  @@index([status])
+  @@map("group_members")
+}
+
+/// Out-of-network phone invitations before a `User` row exists (`group_invites` in PostgreSQL).
+model GroupInvite {
+  id               String           @id @default(uuid())
+  groupId          String
+  group            Group            @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  /** Digits-only, same normalization as OTP / `User.identifier`. */
+  phone            String
+  invitedByUserId  String?
+  invitedBy        User?            @relation("GroupInviteInvitedBy", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+  status           GroupInviteStatus @default(pending)
+  expiresAt        DateTime
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@unique([groupId, phone])
+  @@index([phone])
+  @@index([groupId])
+  @@index([status])
+  @@index([invitedByUserId])
+  @@index([expiresAt])
+  @@map("group_invites")
+}
+
+/// Append-only **activity feed** events for a group (**BE Task 14**).
+model GroupActivityEvent {
+  id            String                   @id @default(uuid())
+  groupId       String
+  group         Group                    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  type          GroupActivityEventType
+  actorUserId   String?
+  actor         User?                    @relation("GroupActivityActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  subjectUserId String?
+  subject       User?                    @relation("GroupActivitySubject", fields: [subjectUserId], references: [id], onDelete: SetNull)
+  payload       Json?
+  createdAt     DateTime                 @default(now())
+
+  @@index([groupId, createdAt(sort: Desc)])
+  @@map("group_activity_events")
+}
+
+/// Append-only **audit / activity log** — arbitrary typed events with JSON metadata (expense lifecycle, membership, etc.).
+///
+/// Distinct from **{@link GroupActivityEvent}** (enum-typed in-app feed). This table is the **canonical** “track everything” stream per group.
+model ActivityLog {
+  id       String   @id @default(uuid())
+  groupId  String
+  group    Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  /** Machine-readable event name (e.g. \`expense_created\`, \`expense_deleted\`). */
+  type     String   @db.VarChar(128)
+  actorId  String?
+  actor    User?    @relation("ActivityLogActor", fields: [actorId], references: [id], onDelete: SetNull)
+  /** Target entity id (expense id, member id, …) when applicable. */
+  entityId String?  @db.VarChar(128)
+  metadata Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  @@index([groupId, createdAt(sort: Desc)])
+  @@index([groupId])
+  @@index([type])
+  @@index([actorId])
+  @@index([entityId])
+  @@map("activity_logs")
+}
+
+/// Group expense (**Phase 1** — core split-bill row).
+model Expense {
+  id               String    @id @default(uuid())
+  groupId          String
+  group            Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  createdByUserId  String
+  createdBy        User      @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  paidByUserId     String
+  paidBy           User      @relation("ExpensePaidBy", fields: [paidByUserId], references: [id], onDelete: Restrict)
+  title            String    @db.VarChar(200)
+  description      String?
+  amount           Decimal   @db.Decimal(19, 4)
+  currency         String    @default("INR") @db.VarChar(3)
+  splitType        String    @default("equal") @db.VarChar(32)
+  category         String    @default("food") @db.VarChar(64)
+  /// When the expense occurred (business **date**, separate from **createdAt**).
+  date             DateTime  @db.Date
+  receiptUrl       String?
+  location         String?   @db.VarChar(500)
+  notes            String?
+  isRecurring      Boolean   @default(false)
+  recurringRule    String?   @db.VarChar(255)
+  categoryId           String?
+  categoryRef          ExpenseCategory?    @relation("ExpenseCategoryFk", fields: [categoryId], references: [id], onDelete: SetNull)
+  subcategoryId        String?
+  subcategoryRef       ExpenseSubcategory? @relation("ExpenseSubcategoryFk", fields: [subcategoryId], references: [id], onDelete: SetNull)
+  merchantId           String?
+  merchantRef          ExpenseMerchant? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+  classificationConfidence Decimal?         @db.Decimal(5, 4)
+  classificationSource     ExpenseClassificationSource?
+  isUserClassified         Boolean               @default(false)
+  classifiedAt             DateTime?             @db.Timestamptz(3)
+  expenseMonth             Int?
+  expenseYear              Int?
+  expenseDayOfWeek         Int?
+  expenseHour              Int?
+  recurringDetected        Boolean               @default(false)
+  recurringConfidence      Decimal?              @db.Decimal(5, 4)
+  recurringGroupId         String?
+  /** Sparse analytics context (vibe, occasion, …). Consider **GIN** index when filtering on paths. */
+  metadata                 Json                  @default("{}")
+  city                     String?               @db.VarChar(128)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime? @db.Timestamptz(3)
+  participants     ExpenseParticipant[]
+  /** Who fronted money for this expense (split tender); amounts must sum to **amount**. */
+  payers           ExpensePayer[]
+  attachments      ExpenseAttachment[]
+  comments         ExpenseComment[]
+  reactions        ExpenseReaction[]
+  tagMappings      ExpenseTagMapping[]
+
+  @@index([groupId])
+  @@index([groupId, createdAt(sort: Desc)])
+  @@index([createdByUserId])
+  @@index([paidByUserId])
+  @@index([date])
+  @@index([deletedAt])
+  @@index([categoryId])
+  @@index([subcategoryId])
+  @@index([merchantId])
+  @@index([recurringDetected])
+  @@index([expenseYear, expenseMonth])
+  @@index([city])
+
+  @@map("expenses")
+}
+
+/// Per-user split line for an expense (owed / paid / shares / %).
+model ExpenseParticipant {
+  id          String  @id @default(uuid())
+  expenseId   String
+  expense     Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  owedAmount  Decimal @default(0) @db.Decimal(19, 4)
+  paidAmount  Decimal @default(0) @db.Decimal(19, 4)
+  percentage  Decimal @default(0) @db.Decimal(7, 4)
+  shares      Decimal @default(0) @db.Decimal(19, 4)
+  isSettled   Boolean @default(false)
+
+  @@unique([expenseId, userId])
+  @@index([expenseId])
+  @@index([userId])
+  @@index([isSettled])
+  @@map("expense_participants")
+}
+
+/// Portion of the expense total each user paid (split tender / multiple payers).
+model ExpensePayer {
+  id        String  @id @default(uuid())
+  expenseId String  @map("expense_id")
+  expense   Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  userId    String  @map("user_id")
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    Decimal @db.Decimal(19, 4)
+
+  @@unique([expenseId, userId])
+  @@index([expenseId])
+  @@index([userId])
+  @@map("expense_payers")
+}
+
+/// Uploaded or linked files for an expense (receipts, images, etc.).
+model ExpenseAttachment {
+  id        String   @id @default(uuid())
+  expenseId String
+  expense   Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  type      String   @default("image") @db.VarChar(32)
+  url       String
+  createdAt DateTime @default(now())
+
+  @@index([expenseId])
+  @@map("expense_attachments")
+}
+
+/// Threaded chat line on an expense.
+model ExpenseComment {
+  id        String   @id @default(uuid())
+  expenseId String
+  expense   Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation("ExpenseCommentAuthor", fields: [userId], references: [id], onDelete: Cascade)
+  message   String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([expenseId])
+  @@index([userId])
+  @@index([expenseId, createdAt])
+  @@map("expense_comments")
+}
+
+/// Emoji reaction on an expense (one row per user per emoji per expense).
+model ExpenseReaction {
+  id        String   @id @default(uuid())
+  expenseId String
+  expense   Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation("ExpenseReactionUser", fields: [userId], references: [id], onDelete: Cascade)
+  emoji     String   @db.VarChar(32)
+  createdAt DateTime @default(now())
+
+  @@unique([expenseId, userId, emoji])
+  @@index([expenseId])
+  @@index([userId])
+  @@index([expenseId, createdAt])
+  @@map("expense_reactions")
 }
 
 model RefreshToken {
@@ -39,4 +463,114 @@ model RefreshToken {
   @@index([tokenHash])
   @@index([familyId])
   @@index([expiresAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TAXONOMY ENGINE — Phase 2 (Categorization, aliases, learning, feedback)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Maps alternate spellings, Hinglish, abbreviations → canonical category/subcategory.
+/// Powers Phase 1 deterministic alias resolution and Phase 2 fuzzy fallback.
+model CategoryAlias {
+  id              String   @id @default(uuid())
+  categoryId      String?
+  category        ExpenseCategory?    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  subcategoryId   String?
+  subcategory     ExpenseSubcategory? @relation(fields: [subcategoryId], references: [id], onDelete: Cascade)
+  /// Normalized alias token (lowercase, stripped, Hinglish-mapped).
+  alias           String   @db.VarChar(200)
+  /// Optional locale hint (`hi`, `en`, `hinglish`); null = universal.
+  locale          String?  @db.VarChar(10)
+  /// How many times this alias resolved successfully (for ranking & pruning).
+  usageCount      Int      @default(0)
+  /// `system` = seeded; `user` = learned from correction; `merchant` = inferred.
+  source          String   @default("system") @db.VarChar(20)
+  createdAt       DateTime @default(now())
+
+  @@unique([alias, categoryId, subcategoryId])
+  @@index([alias])
+  @@index([categoryId])
+  @@index([subcategoryId])
+  @@index([usageCount(sort: Desc)])
+  @@map("category_aliases")
+}
+
+/// Dedicated alias table for merchant fuzzy matching with usage tracking.
+model MerchantAlias {
+  id           String          @id @default(uuid())
+  merchantId   String
+  merchant     ExpenseMerchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  /// Normalized alias (same pipeline as normalization.util).
+  alias        String          @db.VarChar(200)
+  /// `system` | `user` | `upi` (extracted from UPI transaction descriptions).
+  source       String          @default("system") @db.VarChar(20)
+  usageCount   Int             @default(0)
+  createdAt    DateTime        @default(now())
+
+  @@unique([merchantId, alias])
+  @@index([alias])
+  @@index([usageCount(sort: Desc)])
+  @@map("merchant_aliases")
+}
+
+/// Per-user category affinity. Updated on every expense create + correction.
+model UserCategoryLearning {
+  id              String   @id @default(uuid())
+  userId          String
+  categoryId      String?
+  subcategoryId   String?
+  /// Accumulated weight (incremented on use, decayed periodically).
+  weight          Decimal  @default(0) @db.Decimal(10, 4)
+  /// How many times user chose this category.
+  hitCount        Int      @default(0)
+  /// Last time this category was used by this user.
+  lastUsedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, categoryId, subcategoryId])
+  @@index([userId])
+  @@index([userId, weight(sort: Desc)])
+  @@map("user_category_learning")
+}
+
+/// Logged when a user corrects/overrides a classification.
+model ClassificationFeedback {
+  id                     String   @id @default(uuid())
+  expenseId              String
+  userId                 String
+  predictedCategoryId    String?
+  predictedSubcategoryId String?
+  correctedCategoryId    String?
+  correctedSubcategoryId String?
+  inputTitle             String   @db.VarChar(500)
+  normalizedTitle        String   @db.VarChar(500)
+  originalConfidence     Decimal  @db.Decimal(5, 4)
+  /// `accepted` | `corrected` | `dismissed`
+  action                 String   @db.VarChar(20)
+  createdAt              DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([predictedCategoryId])
+  @@index([correctedCategoryId])
+  @@index([createdAt])
+  @@map("classification_feedback")
+}
+
+/// Maps phonetic variants, transliterations, and abbreviations to canonical tokens.
+/// Loaded into memory at boot; refreshed on schedule.
+model NormalizationEntry {
+  id         String   @id @default(uuid())
+  /// The variant spelling (`chaai`, `chay`, `chai pe charcha`).
+  variant    String   @unique @db.VarChar(200)
+  /// The canonical form (`chai`).
+  canonical  String   @db.VarChar(200)
+  /// `hinglish` | `abbreviation` | `transliteration` | `typo`
+  type       String   @db.VarChar(30)
+  createdAt  DateTime @default(now())
+
+  @@index([canonical])
+  @@index([type])
+  @@map("normalization_dictionary")
 }

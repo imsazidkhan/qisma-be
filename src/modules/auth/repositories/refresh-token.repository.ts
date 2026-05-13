@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { RefreshToken } from '@prisma/client';
-import { PrismaService } from '../../../infrastructure/database/prisma.service.js';
+import { PrismaService } from '../../../infrastructure/database/prisma.service';
 
 export interface CreateRefreshTokenInput {
   id: string; // JWT jti

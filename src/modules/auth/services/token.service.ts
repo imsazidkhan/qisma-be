@@ -2,9 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID, createHash } from 'crypto';
-import { RedisService } from '../../../infrastructure/redis/redis.service.js';
-import { JWT_CONSTANTS, AUTH_REDIS_KEYS } from '../constants/auth.constants.js';
-import { RefreshTokenRepository } from '../repositories/refresh-token.repository.js';
+import { RedisService } from '../../../infrastructure/redis/redis.service';
+import { JWT_CONSTANTS, AUTH_REDIS_KEYS } from '../constants/auth.constants';
+import { RefreshTokenRepository } from '../repositories/refresh-token.repository';
 
 export interface TokenPayload {
   sub: string; // userId (database ID)
@@ -206,6 +206,22 @@ export class TokenService {
     );
 
     return { tokens: newTokens, reuseDetected: false };
+  }
+
+  /**
+   * Best-effort decode of a refresh JWT before revoke (logout UX).
+   * Returns `null` if the token is malformed, wrong type, or cryptographically invalid.
+   */
+  tryGetRefreshTokenPayload(token: string): TokenPayload | null {
+    try {
+      const payload = this.verifyRefreshTokenStructure(token);
+      if (payload.type !== 'refresh' || !payload.identifier?.trim()) {
+        return null;
+      }
+      return payload;
+    } catch {
+      return null;
+    }
   }
 
   /**

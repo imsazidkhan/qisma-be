@@ -14,21 +14,21 @@ import {
   ApiHeader,
   ApiExtraModels,
 } from '@nestjs/swagger';
-import { OtpService } from './otp.service.js';
-import { SendOtpDto } from './dto/send-otp.dto.js';
-import { VerifyOtpDto } from './dto/verify-otp.dto.js';
+import { OtpService } from './otp.service';
+import { SendOtpDto } from './dto/send-otp.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
 import {
   SendOtpResponseDto,
   VerifyOtpResponseDto,
-} from './dto/otp-responses.dto.js';
-import { ApiErrorDto } from '../../common/dto/api-response.dto.js';
-import { IdempotencyService } from '../../common/services/idempotency.service.js';
+} from './dto/otp-responses.dto';
+import { ApiErrorDto } from '../../common/dto/api-response.dto';
+import { IdempotencyService } from '../../common/services/idempotency.service';
 import {
   IdempotencyKeyRequiredException,
   IdempotencyKeyInvalidException,
-} from '../../common/exceptions/api.exception.js';
-import type { ApiSuccessResponse } from '../../common/interfaces/api-response.interface.js';
-import type { VerifyOtpData } from './otp.service.js';
+} from '../../common/exceptions/api.exception';
+import type { ApiSuccessResponse } from '../../common/interfaces/api-response.interface';
+import type { VerifyOtpData } from './otp.service';
 
 @ApiTags('OTP')
 @ApiExtraModels(ApiErrorDto)
@@ -81,11 +81,8 @@ Generates a cryptographically secure 6-digit OTP and stores the session in Redis
               success: false,
               error: {
                 code: 'VALIDATION_ERROR',
-                message:
-                  'Phone number must be a valid international format',
-                details: [
-                  'Phone number must be a valid international format',
-                ],
+                message: 'Phone number must be a valid international format',
+                details: ['Phone number must be a valid international format'],
               },
             },
           },
@@ -119,8 +116,7 @@ Generates a cryptographically secure 6-digit OTP and stores the session in Redis
               success: false,
               error: {
                 code: 'COOLDOWN_ACTIVE',
-                message:
-                  'Please wait 45 seconds before requesting a new OTP.',
+                message: 'Please wait 45 seconds before requesting a new OTP.',
                 retryAfter: 45,
               },
             },
@@ -202,6 +198,7 @@ Atomically verifies a 6-digit OTP against the stored session.
 - Max 5 wrong OTP attempts → session locked for 5 minutes
 - Verify rate limit: 10 requests / min per session
 - On success → phone marked verified, \`lastLoginAt\` updated, user row upserted
+- Matching **pending** offline **\`group_invites\`** for this phone → **removed** / replaced by **\`group_members\` \`pending\`** (**accept**/**decline** in app)
 `,
   })
   @ApiHeader({
@@ -243,8 +240,7 @@ Atomically verifies a 6-digit OTP against the stored session.
               success: false,
               error: {
                 code: 'IDEMPOTENCY_KEY_REQUIRED',
-                message:
-                  'Idempotency-Key header is required for this request.',
+                message: 'Idempotency-Key header is required for this request.',
               },
             },
           },
@@ -401,7 +397,8 @@ Atomically verifies a 6-digit OTP against the stored session.
   // ─── 500 Internal Server Error ─────────────────────────────────
   @ApiResponse({
     status: 500,
-    description: 'Redis unavailable, token generation failed, or DB unreachable.',
+    description:
+      'Redis unavailable, token generation failed, or DB unreachable.',
     content: {
       'application/json': {
         schema: { $ref: '#/components/schemas/ApiErrorDto' },

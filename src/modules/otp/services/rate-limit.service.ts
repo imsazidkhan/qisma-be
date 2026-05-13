@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { RedisService } from '../../../infrastructure/redis/redis.service.js';
+import { RedisService } from '../../../infrastructure/redis/redis.service';
 import {
   RATE_LIMIT_CONSTANTS,
   OTP_REDIS_KEYS,
-} from '../constants/otp.constants.js';
+} from '../constants/otp.constants';
 
 export interface RateLimitResult {
   allowed: boolean;

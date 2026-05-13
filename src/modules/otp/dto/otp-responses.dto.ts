@@ -32,15 +32,13 @@ export class SendOtpResponseDto {
 export class VerifyOtpDataDto {
   @ApiProperty({
     description: 'Short-lived JWT access token (15 min)',
-    example:
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NzJlNDg...',
+    example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NzJlNDg...',
   })
   accessToken!: string;
 
   @ApiProperty({
     description: 'Long-lived JWT refresh token (7 days)',
-    example:
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NzJlNDg...',
+    example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NzJlNDg...',
   })
   refreshToken!: string;
 

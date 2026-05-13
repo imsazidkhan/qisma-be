@@ -42,6 +42,21 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async setIfNotExists(
+    key: string,
+    value: string,
+    ttlSeconds: number,
+  ): Promise<boolean> {
+    const result = await this.client.set(
+      key,
+      value,
+      'EX',
+      ttlSeconds,
+      'NX',
+    );
+    return result === 'OK';
+  }
+
   async del(...keys: string[]): Promise<void> {
     if (keys.length > 0) {
       await this.client.del(...keys);
@@ -58,6 +73,26 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   async ttl(key: string): Promise<number> {
     return this.client.ttl(key);
+  }
+
+  /**
+   * SCAN + batched DEL — evict analytics keys by prefix (e.g. `lb:analytics:{groupId}:`).
+   */
+  async deleteByPattern(pattern: string): Promise<void> {
+    let cursor = '0';
+    do {
+      const [next, keys] = await this.client.scan(
+        cursor,
+        'MATCH',
+        pattern,
+        'COUNT',
+        '100',
+      );
+      cursor = next;
+      if (keys.length > 0) {
+        await this.client.del(...keys);
+      }
+    } while (cursor !== '0');
   }
 
   async exists(key: string): Promise<boolean> {
@@ -205,17 +240,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         redis.call('EXPIRE', attemptsKey, lockDuration)
       end
 
-      if attempts > maxAttempts then
-        -- Lock the session
-        local lockedUntil = now + (lockDuration * 1000)
-        session.status = 'LOCKED'
-        session.lockedUntil = lockedUntil
-        redis.call('SETEX', sessionKey, lockDuration, cjson.encode(session))
-        return {6, lockedUntil} -- MAX_ATTEMPTS
-      end
-
       -- 6. Compare OTP (constant-time not possible in Lua, but atomic)
       if session.otp ~= inputOtp then
+        if attempts >= maxAttempts then
+          -- Lock exactly on the max failed attempt.
+          local lockedUntil = now + (lockDuration * 1000)
+          session.status = 'LOCKED'
+          session.lockedUntil = lockedUntil
+          redis.call('SETEX', sessionKey, lockDuration, cjson.encode(session))
+          return {6, lockedUntil} -- MAX_ATTEMPTS
+        end
         -- Save session state if it was unlocked
         local remainingTtl = math.ceil((session.expiresAt - now) / 1000)
         if remainingTtl > 0 then

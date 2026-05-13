@@ -1,12 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID, randomInt } from 'crypto';
-import { RedisService } from '../../infrastructure/redis/redis.service.js';
-import { OTP_CONSTANTS, OTP_REDIS_KEYS } from './constants/otp.constants.js';
+import { RedisService } from '../../infrastructure/redis/redis.service';
+import { OTP_CONSTANTS, OTP_REDIS_KEYS } from './constants/otp.constants';
 import {
   OtpSession,
   OtpSessionStatus,
-} from './interfaces/otp-session.interface.js';
-import type { ApiSuccessResponse } from '../../common/interfaces/api-response.interface.js';
+} from './interfaces/otp-session.interface';
+import type { ApiSuccessResponse } from '../../common/interfaces/api-response.interface';
+import {
+  ANALYTICS_EVENT,
+  INVITE_CONVERSION_CHANNEL,
+} from '../../common/analytics/analytics-log.constants';
 import {
   CooldownException,
   InvalidOtpException,
@@ -18,10 +22,12 @@ import {
   PhoneRateLimitedException,
   IpRateLimitedException,
   VerifyRateLimitedException,
-} from '../../common/exceptions/api.exception.js';
-import { RateLimitService } from './services/rate-limit.service.js';
-import { TokenService } from '../auth/services/token.service.js';
-import { UserService } from '../user/user.service.js';
+} from '../../common/exceptions/api.exception';
+import { PinoLogger } from 'nestjs-pino';
+import { RateLimitService } from './services/rate-limit.service';
+import { TokenService } from '../auth/services/token.service';
+import { UserService } from '../user/user.service';
+import { GroupsService } from '../groups/groups.service';
 
 export interface SendOtpData {
   sessionId: string;
@@ -43,7 +49,11 @@ export class OtpService {
     private readonly rateLimitService: RateLimitService,
     private readonly tokenService: TokenService,
     private readonly userService: UserService,
-  ) {}
+    private readonly groupsService: GroupsService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(OtpService.name);
+  }
 
   async sendOtp(
     phone: string,
@@ -196,6 +206,21 @@ export class OtpService {
         // Persist user + mark phoneVerified + update lastLoginAt (atomic upsert)
         const user = await this.userService.upsertVerifiedLogin(identifier);
 
+        const invitesClaimed =
+          await this.groupsService.claimPendingPhoneInvitesAfterSignup(
+            user.id,
+            identifier,
+          );
+        if (invitesClaimed > 0) {
+          this.logger.info({
+            msg: ANALYTICS_EVENT.INVITE_CONVERSION,
+            analyticsEvent: ANALYTICS_EVENT.INVITE_CONVERSION,
+            inviteChannel: INVITE_CONVERSION_CHANNEL.OTP_SIGNUP,
+            userId: user.id,
+            invitesClaimed,
+          });
+        }
+
         // Generate JWT tokens with userId as `sub`
         const tokens = await this.tokenService.generateTokenPair(
           user.id,
@@ -269,6 +294,15 @@ export class OtpService {
     const min = Math.pow(10, OTP_CONSTANTS.LENGTH - 1);
     const max = Math.pow(10, OTP_CONSTANTS.LENGTH);
     return randomInt(min, max).toString();
+  }
+
+  /**
+   * Clears inter-send cooldown for this phone (digits-only identifier, same as send path).
+   * Used on **logout** so the same user can immediately request a new OTP — trade-off vs stricter abuse prevention.
+   */
+  async clearSendCooldownForIdentifier(identifier: string): Promise<void> {
+    const key = OTP_REDIS_KEYS.cooldown(this.normalizePhone(identifier));
+    await this.redisService.del(key);
   }
 
   /**

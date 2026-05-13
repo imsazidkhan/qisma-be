@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { RedisService } from '../../infrastructure/redis/redis.service.js';
+import { RedisService } from '../../infrastructure/redis/redis.service';
 import {
   OTP_REDIS_KEYS,
   IDEMPOTENCY_CONSTANTS,
-} from '../../modules/otp/constants/otp.constants.js';
-import { IdempotencyConflictException } from '../exceptions/api.exception.js';
+} from '../../modules/otp/constants/otp.constants';
+import { IdempotencyConflictException } from '../exceptions/api.exception';
 
 export interface IdempotencyResult<T> {
   cached: boolean;
@@ -45,13 +45,27 @@ export class IdempotencyService {
       }
     }
 
-    // Set processing lock
+    // Atomically set processing lock (NX) to avoid concurrent acquisitions.
     const processingLock: CachedResponse = { status: 'processing' };
-    await this.redisService.set(
+    const acquired = await this.redisService.setIfNotExists(
       key,
       JSON.stringify(processingLock),
       IDEMPOTENCY_CONSTANTS.PROCESSING_TTL_SECONDS,
     );
+
+    if (!acquired) {
+      const latest = await this.redisService.get(key);
+      if (latest) {
+        const cached = JSON.parse(latest) as CachedResponse;
+        if (cached.status === 'completed' && cached.response !== undefined) {
+          return {
+            cached: true,
+            response: cached.response as T,
+          };
+        }
+      }
+      throw new IdempotencyConflictException();
+    }
 
     return { cached: false, response: null };
   }
