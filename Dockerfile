@@ -26,6 +26,10 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 # Copy only manifests first — maximum layer cache hits on code changes
 COPY package.json pnpm-lock.yaml .npmrc ./
 
+# `postinstall` runs `prisma generate` — schema + config must exist before `pnpm install`.
+COPY prisma ./prisma
+COPY prisma.config.ts ./prisma.config.ts
+
 # Install with frozen lockfile for reproducibility
 RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
