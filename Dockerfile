@@ -84,6 +84,10 @@ COPY --chown=nestjs:nodejs --from=builder /app/package.json ./package.json
 COPY --chown=nestjs:nodejs --from=builder /app/prisma ./prisma
 COPY --chown=nestjs:nodejs --from=builder /app/prisma.config.ts ./prisma.config.ts
 
+# Writable dirs for multer (avatars) + local receipt storage; process runs as **nestjs** (non-root).
+RUN mkdir -p uploads/avatars uploads/receipts \
+  && chown -R nestjs:nodejs uploads
+
 USER nestjs
 
 EXPOSE 3000
