@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # ─────────────────────────────────────────────────────────────────────
-# Veloraq Auth Service — Production Dockerfile
+# Qisma API — Production Dockerfile
 #
 # Multi-stage build optimized for:
 #   • Small final image (~180 MB) via Alpine + production-only deps

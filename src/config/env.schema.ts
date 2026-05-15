@@ -74,12 +74,36 @@ const envShape = z.object({
     ),
 
   // ─── Redis ───────────────────────────────────────────────────
-  REDIS_HOST: z.string().min(1).default('localhost'),
+  /** Hostname only (e.g. **`xxx.upstash.io`**). No **`http(s)://`**, **`redis-cli`**, or **`redis://` / `rediss://` URLs**. TLS = **`REDIS_TLS`**. */
+  REDIS_HOST: z
+    .string()
+    .min(1)
+    .default('localhost')
+    .refine((h) => !/\s/.test(h), {
+      message:
+        'REDIS_HOST must be a hostname only (no spaces). Do not paste a shell command or full redis URL.',
+    })
+    .refine((h) => !/^https?:\/\//i.test(h), {
+      message:
+        'REDIS_HOST must not include https:// or http:// — use only xxx.upstash.io (TLS uses REDIS_TLS=true).',
+    })
+    .refine(
+      (h) => !/^(redis|rediss):\/\//i.test(h) && !/^redis-cli\b/i.test(h),
+      {
+        message:
+          'REDIS_HOST must be only the host (example: xxx.upstash.io). Use REDIS_PASSWORD for the secret part of redis:// URLs.',
+      },
+    ),
   REDIS_PORT: z.coerce.number().int().positive().default(6379),
   REDIS_PASSWORD: z.string().optional(),
   REDIS_DB: z.coerce.number().int().nonnegative().default(0),
   // Set to 'true' for Upstash / any TLS-required managed Redis.
   REDIS_TLS: z.enum(['true', 'false']).default('false'),
+  /**
+   * Prefer **`4`** if **`connect ETIMEDOUT`** to Upstash persists but **`redis-cli`**
+   * works — Node may be trying IPv6 first while only IPv4 routes succeed.
+   */
+  REDIS_FAMILY: z.enum(['4', '6']).optional(),
 
   // ─── JWT ─────────────────────────────────────────────────────
   // Secrets MUST be strong. We enforce a minimum length and explicitly
@@ -120,9 +144,9 @@ export const envSchema = envShape.refine(
     }
     return Boolean(
       data.S3_BUCKET &&
-        data.S3_ACCESS_KEY_ID &&
-        data.S3_SECRET_ACCESS_KEY &&
-        data.S3_PUBLIC_BASE_URL,
+      data.S3_ACCESS_KEY_ID &&
+      data.S3_SECRET_ACCESS_KEY &&
+      data.S3_PUBLIC_BASE_URL,
     );
   },
   {

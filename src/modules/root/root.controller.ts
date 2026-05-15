@@ -7,7 +7,7 @@ export class RootController {
   @Get()
   root() {
     return {
-      service: 'Veloraq Auth Service',
+      service: 'Qisma API',
       version: '1.0.0',
       status: 'running',
       docs: '/docs',

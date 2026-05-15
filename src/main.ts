@@ -278,12 +278,16 @@ multi-layer rate limiting, idempotency, and audit trails.
 `;
 
   const swaggerConfig = new DocumentBuilder()
-    .setTitle('Veloraq Auth Service')
+    .setTitle('Qisma API')
     .setDescription(swaggerDescription)
     .setVersion('1.0')
-    .setContact('Veloraq', 'https://veloraq.com', 'support@veloraq.com')
+    .setContact(
+      'Qisma',
+      'https://github.com/imsazidkhan/qisma-be',
+      'contact@example.com',
+    )
     .setLicense('MIT', 'https://opensource.org/licenses/MIT')
-    .addServer('https://api.veloraq.co', 'Production')
+    .addServer('https://api.example.com', 'Production')
     .addServer('http://localhost:3000', 'Local development')
     .addBearerAuth(
       {
@@ -324,7 +328,7 @@ multi-layer rate limiting, idempotency, and audit trails.
     swaggerOptions: {
       persistAuthorization: true,
     },
-    customSiteTitle: 'Veloraq Auth — API Docs',
+    customSiteTitle: 'Qisma — API Docs',
   });
   // ─────────────────────────────────────────────────────────────────
 

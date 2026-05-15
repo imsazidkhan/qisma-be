@@ -11,12 +11,17 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     // REDIS_TLS=true → connects over rediss:// with certificate validation.
     const tlsEnabled =
       this.configService.get<string>('REDIS_TLS', 'false') === 'true';
+    const familyRaw = this.configService.get<'4' | '6' | undefined>(
+      'REDIS_FAMILY',
+    );
+    const family = familyRaw === '4' ? 4 : familyRaw === '6' ? 6 : undefined;
 
     this.client = new Redis({
       host: this.configService.get<string>('REDIS_HOST', 'localhost'),
       port: this.configService.get<number>('REDIS_PORT', 6379),
       password: this.configService.get<string>('REDIS_PASSWORD'),
       db: this.configService.get<number>('REDIS_DB', 0),
+      ...(family !== undefined ? { family } : {}),
       ...(tlsEnabled ? { tls: {} } : {}),
       retryStrategy: (times) => Math.min(times * 50, 2000),
     });
@@ -47,13 +52,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     value: string,
     ttlSeconds: number,
   ): Promise<boolean> {
-    const result = await this.client.set(
-      key,
-      value,
-      'EX',
-      ttlSeconds,
-      'NX',
-    );
+    const result = await this.client.set(key, value, 'EX', ttlSeconds, 'NX');
     return result === 'OK';
   }
 

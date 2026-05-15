@@ -1,8 +1,8 @@
-# Veloraq Auth Service
+# Qisma API
 
-GitHub repository: [qisma-backend](https://github.com/imsazidkhan/qisma-backend).
+GitHub repository: [qisma-be](https://github.com/imsazidkhan/qisma-be).
 
-Production-grade OTP-based authentication microservice built with **NestJS**, **PostgreSQL**, and **Redis**.
+Production API for **Qisma** — **NestJS**, **PostgreSQL**, **Redis**. Ships phone **OTP** + **JWT** auth, **groups** & invites, **contacts** sync, **expenses** (splits, receipts, comments), uploads, and related endpoints.
 
 ---
 
@@ -10,6 +10,7 @@ Production-grade OTP-based authentication microservice built with **NestJS**, **
 
 - **OTP flow** — phone-based one-time passwords with cryptographically secure generation (`crypto.randomInt`)
 - **JWT authentication** — short-lived access tokens + long-lived refresh tokens with rotation & reuse detection
+- **Groups & expenses** — memberships, invites, activity feeds, expense lifecycle, receipt uploads, balances & analytics-oriented caching
 - **Multi-layer rate limiting** — IP → cooldown → phone (atomic Redis Lua scripts)
 - **Idempotency** — prevents duplicate processing on network retries
 - **Token family revocation** — reusing a rotated refresh token revokes the entire family + all user sessions
@@ -93,8 +94,8 @@ Product-level contract for envelopes, **`GET /v1/users/me/groups`** (home), **`a
 ## Docker
 
 ```bash
-docker build -t veloraq-auth .
-docker run --rm -p 3000:3000 --env-file .env veloraq-auth
+docker build -t qisma-be .
+docker run --rm -p 3000:3000 --env-file .env qisma-be
 ```
 
 Multi-stage build produces a ~180 MB image with non-root user, Prisma-generated client, and production-only dependencies.
