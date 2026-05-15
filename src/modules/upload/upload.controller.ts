@@ -101,8 +101,8 @@ Stores an avatar image on the server and returns a **public URL** suitable for u
 - The previous avatar (if any) is **not** automatically deleted; storage cleanup is out of scope.
 
 ### Typical client flow
-1. \`POST /v1/upload/avatar\` (multipart) → receive \`{ url }\`
-2. \`PATCH /v1/auth/me\` with \`{ "avatarUrl": "<url from step 1>" }\`
+1. \`POST /v1/upload/avatar\` (multipart) → JSON \`{ "success": true, "data": { "url": "…" } }\`
+2. \`PATCH /v1/auth/me\` with \`{ "avatarUrl": "<data.url from step 1>" }\`
 `,
   })
   @ApiConsumes('multipart/form-data')

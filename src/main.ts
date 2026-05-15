@@ -190,7 +190,7 @@ multi-layer rate limiting, idempotency, and audit trails.
 3. \`POST /v1/otp/verify\` — \`sessionId\` + OTP + \`Idempotency-Key\` header → JWTs; non-expired **\`group_invites\`** for that phone → **deleted** / replaced by **\`pending\`** **\`group_members\`** (then **accept** / **decline**)
 4. Use \`Authorization: Bearer <accessToken>\` on protected endpoints
 5. \`GET /v1/auth/me\` — optional on app start: profile + onboarding hints (\`hasDisplayName\`, \`hasAvatar\`, \`hasUseCase\`, \`isOnboardingComplete\`)
-6. \`POST /v1/upload/avatar\` (multipart) → receive \`{ url }\` for the new avatar
+6. \`POST /v1/upload/avatar\` (multipart) → \`{ "success": true, "data": { "url": "…" } }\`
 7. \`PATCH /v1/auth/me\` — update \`name\`, \`avatarUrl\`, \`useCase\`, and finally \`onboardingCompleted: true\`
 8. When access token expires → \`POST /v1/auth/refresh\` with refresh token → receives **new** pair (old refresh is invalidated)
 9. \`POST /v1/auth/logout\` revokes the refresh token
