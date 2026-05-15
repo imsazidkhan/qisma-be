@@ -411,7 +411,7 @@ model ExpenseAttachment {
   @@map("expense_attachments")
 }
 
-/// Threaded chat line on an expense.
+/// Threaded chat line on an expense (same-expense constraint for parent enforced in app layer).
 model ExpenseComment {
   id        String   @id @default(uuid())
   expenseId String
@@ -420,10 +420,17 @@ model ExpenseComment {
   user      User     @relation("ExpenseCommentAuthor", fields: [userId], references: [id], onDelete: Cascade)
   message   String   @db.Text
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  parentCommentId String?
+  parentComment   ExpenseComment?  @relation("ExpenseCommentThread", fields: [parentCommentId], references: [id], onDelete: SetNull)
+  replies         ExpenseComment[] @relation("ExpenseCommentThread")
 
   @@index([expenseId])
   @@index([userId])
   @@index([expenseId, createdAt])
+  @@index([expenseId, parentCommentId, createdAt])
   @@map("expense_comments")
 }
 

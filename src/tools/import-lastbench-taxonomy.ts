@@ -71,8 +71,12 @@ async function main(): Promise<void> {
     }
 
     // eslint-disable-next-line no-console
+    const subCount = LASTBENCH_TAXONOMY_CATEGORIES.reduce(
+      (n, c) => n + c.subcategories.length,
+      0,
+    );
     console.log(
-      `taxonomy:import OK — ${String(LASTBENCH_TAXONOMY_CATEGORIES.length)} categories`,
+      `taxonomy:import OK — ${String(LASTBENCH_TAXONOMY_CATEGORIES.length)} categories, ${String(subCount)} subcategories`,
     );
   } finally {
     await prisma.$disconnect();

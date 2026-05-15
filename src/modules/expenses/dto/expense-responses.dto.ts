@@ -1,14 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-import { CategoryTaxonomy } from './classify-expense.dto';
-
-export class ExpenseTaxonomyDisplayDto {
-  @ApiProperty({ description: '**text** = category (label); **icon** = subcategory visual slug' })
-  text!: CategoryTaxonomy;
-
-  @ApiPropertyOptional({ nullable: true })
-  icon!: CategoryTaxonomy | null;
-}
+import { ExpenseCategoryDisplayDto } from './classify-expense.dto';
 
 export class ExpenseUserSnippetDto {
   @ApiProperty()
@@ -46,11 +38,25 @@ export class ExpenseFeedItemDto {
   @ApiProperty()
   createdAt!: string;
 
-  @ApiPropertyOptional({ nullable: true })
-  taxonomy!: ExpenseTaxonomyDisplayDto | null;
+  @ApiPropertyOptional({ nullable: true, type: ExpenseCategoryDisplayDto })
+  category!: ExpenseCategoryDisplayDto | null;
 
   @ApiProperty()
   paidBy!: ExpenseUserSnippetDto;
+
+  @ApiProperty({
+    description:
+      'Distinct people on the expense split (**max 2** for overlapping avatar stacks); **`paidBy` first**, then others by display name.',
+    type: [ExpenseUserSnippetDto],
+    maxItems: 2,
+  })
+  splitParticipantPreview!: ExpenseUserSnippetDto[];
+
+  @ApiProperty({
+    description: 'Total distinct participants on the split (use **`preview.length`** vs this for **`+N`** overflow).',
+    minimum: 1,
+  })
+  splitParticipantCount!: number;
 
   @ApiPropertyOptional({ nullable: true })
   receiptUrl!: string | null;
@@ -106,8 +112,8 @@ export class ExpenseDetailDto {
   @ApiProperty()
   updatedAt!: string;
 
-  @ApiPropertyOptional({ nullable: true })
-  taxonomy!: ExpenseTaxonomyDisplayDto | null;
+  @ApiPropertyOptional({ nullable: true, type: ExpenseCategoryDisplayDto })
+  category!: ExpenseCategoryDisplayDto | null;
 
   @ApiProperty()
   paidBy!: ExpenseUserSnippetDto;
@@ -132,11 +138,35 @@ export class ExpenseCommentEntryDto {
   @ApiProperty()
   message!: string;
 
+  @ApiProperty({
+    nullable: true,
+    format: 'uuid',
+    description: 'Parent comment when this row is a reply; **null** for top-level.',
+  })
+  parentCommentId!: string | null;
+
   @ApiProperty()
   createdAt!: string;
 
+  @ApiProperty({
+    description: 'ISO8601 — Prisma **@updatedAt** (mirrors **createdAt** until edits exist).',
+  })
+  updatedAt!: string;
+
   @ApiPropertyOptional()
   user!: ExpenseUserSnippetDto;
+}
+
+export class ExpenseCommentPageDto {
+  @ApiProperty({
+    type: [ExpenseCommentEntryDto],
+    description:
+      'Ordered by **sort** query: **asc** → oldest first; **desc** → newest first.',
+  })
+  items!: ExpenseCommentEntryDto[];
+
+  @ApiPropertyOptional({ nullable: true })
+  nextCursor!: string | null;
 }
 
 export class ExpenseReactionEntryDto {

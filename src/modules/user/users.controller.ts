@@ -23,7 +23,18 @@ import {
   MyGroupRowDto,
   MyGroupSummaryDto,
 } from '../groups/dto/my-active-groups-responses.dto';
+import {
+  HOME_GROUPS_TAB,
+  MyGroupsHomeQueryDto,
+} from '../groups/dto/my-groups-home-query.dto';
+import {
+  MyGroupHomeCardDto,
+  MyGroupHomeSummaryDto,
+  MyGroupsHomeListResponseDto,
+  MyGroupsHomePageDto,
+} from '../groups/dto/my-groups-home-responses.dto';
 import { GroupsService } from '../groups/groups.service';
+import { ExpensesService } from '../expenses/expenses.service';
 import { USER_CONSTANTS } from './constants/user.constants';
 import { SearchUsersQueryDto } from './dto/search-users-query.dto';
 import {
@@ -108,12 +119,18 @@ function toMyGroupRowDto(
   MyGroupRowDto,
   MyGroupSummaryDto,
   MyActiveGroupListResponseDto,
+  MyGroupsHomeQueryDto,
+  MyGroupsHomePageDto,
+  MyGroupsHomeListResponseDto,
+  MyGroupHomeCardDto,
+  MyGroupHomeSummaryDto,
 )
 @Controller('users')
 export class UsersController {
   constructor(
     private readonly users: UserService,
     private readonly groups: GroupsService,
+    private readonly expenses: ExpensesService,
   ) {}
 
   /**
@@ -236,6 +253,76 @@ Bearer access token (**\`type: access\`**).
       success: true,
       data: rows.map(toMyGroupRowDto),
     };
+  }
+
+  @Get('me/groups/home')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary:
+      'Home groups with balances + counts + last activity (authenticated) — tab filter',
+    description: [
+      'Returns **`MyGroupsHomePageDto`**: **`tab`** (echo) + **`items`** enriched cards for every **active** membership.',
+      '',
+      '- **Tabs (`tab` query):** **`all`** | **`owe`** | **`get_back`** | **`settled`** — filters by viewer **`balanceBucket`** (**`balanceNetMinor`** sign vs zero, same math as **`GET /v1/groups/{groupId}/balances`** **`summary`**).',
+      '- **Ordering:** **`joinedAt`** descending among **`items`** (newest membership first).',
+      '- **`balanceNetMinor` / `dominantCurrency`:** aligned with **balances** API (**minor integer string**). **`pendingSettlementCount`** = edges involving you.',
+      '- **`lastActivity*`** from latest **`activity_logs`** row per group; **`lastActivityPreview`** is English-only helper text.',
+      '- **Pending invites** remain on **`GET …/me/group-invites`**.',
+      '',
+      '### Auth',
+      'Bearer access token (**type: access**).',
+    ].join('\n'),
+  })
+  @ApiOkResponse({
+    description:
+      '`200 OK` — `{ success: true, data: MyGroupsHomePageDto }` (**items** may be empty).',
+    type: MyGroupsHomeListResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: '`VALIDATION_ERROR` — invalid **`tab`**',
+    content: {
+      'application/json': {
+        schema: { $ref: '#/components/schemas/ApiErrorDto' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Missing or invalid access token',
+    content: {
+      'application/json': {
+        schema: { $ref: '#/components/schemas/ApiErrorDto' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 403,
+    description: '`ACCOUNT_INACTIVE`',
+    content: {
+      'application/json': {
+        schema: { $ref: '#/components/schemas/ApiErrorDto' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 404,
+    description: '`USER_NOT_FOUND` — JWT subject user row missing',
+    content: {
+      'application/json': {
+        schema: { $ref: '#/components/schemas/ApiErrorDto' },
+      },
+    },
+  })
+  async listMyGroupsHome(
+    @Req() req: Request,
+    @Query() query: MyGroupsHomeQueryDto,
+  ): Promise<ApiSuccessResponse<MyGroupsHomePageDto>> {
+    const { userId } = authContextOrThrow(req);
+    const tab = query.tab ?? HOME_GROUPS_TAB.ALL;
+    const data = await this.expenses.listMyGroupsHome(userId, tab);
+    return { success: true, data };
   }
 
   @Get('search')

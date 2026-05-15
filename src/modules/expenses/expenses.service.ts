@@ -1,9 +1,15 @@
 import { Injectable } from '@nestjs/common';
-import type { Expense, Prisma, User } from '@prisma/client';
+import type {
+  Expense,
+  ExpenseCategory,
+  ExpenseSubcategory,
+  User,
+} from '@prisma/client';
 import {
   ExpenseClassificationSource,
   GroupActivityEventType,
   GroupMemberStatus,
+  Prisma,
 } from '@prisma/client';
 import Decimal from 'decimal.js';
 
@@ -16,6 +22,15 @@ import {
 } from '../../common/exceptions/api.exception';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { GroupAnalyticsCacheService } from '../analytics/group-analytics-cache.service';
+import {
+  HOME_GROUPS_TAB,
+  type HomeGroupsTab,
+} from '../groups/dto/my-groups-home-query.dto';
+import type {
+  GroupHomeBalanceBucket,
+  MyGroupHomeCardDto,
+  MyGroupsHomePageDto,
+} from '../groups/dto/my-groups-home-responses.dto';
 import { GroupMembershipRulesService } from '../groups/permissions/group-membership-rules.service';
 import { GroupActivityRepository } from '../groups/repositories/group-activity.repository';
 import { BalanceEngine } from '../splits/balance.engine';
@@ -26,48 +41,48 @@ import { ReceiptStorageService } from '../upload/receipt-storage.service';
 import { ClassifierService } from './classification/classifier.service';
 import { UserLearningService } from './classification/user-learning.service';
 import { TaxonomyCacheService } from './classification/taxonomy-cache.service';
-import type { CategoryTreeItemDto } from './dto/classify-expense.dto';
-import type { CreateExpenseCommentBodyDto } from './dto/create-expense-comment.dto';
+import type {
+  CategoryTreeItemDto,
+  ExpenseCategoryDisplayDto,
+} from './dto/classify-expense.dto';
 import type { CreateExpenseReactionBodyDto } from './dto/create-expense-reaction.dto';
 import type { CreateExpenseBodyDto } from './dto/create-expense.dto';
 import type { ListExpensesQueryDto } from './dto/list-expenses-query.dto';
 import type { PatchExpenseBodyDto } from './dto/patch-expense.dto';
 import {
   type ExpenseAttachmentEntryDto,
-  type ExpenseCommentEntryDto,
   type ExpenseDetailDto,
   type ExpenseDetailWithRelationsDto,
   type ExpenseFeedItemDto,
   type ExpenseFeedPageDto,
+  type ExpenseUserSnippetDto,
   type ExpenseHistoryEntryDto,
   type ExpenseMutationResponseDto,
   type ExpenseReactionEntryDto,
   type GroupBalanceViewDto,
 } from './dto/expense-responses.dto';
 import {
+  EXPENSE_DETAIL_COMMENT_PREVIEW_LIMIT,
   EXPENSE_FEED_DEFAULT_LIMIT,
   EXPENSE_FEED_MAX_LIMIT,
   EXPENSE_FEED_SORT,
 } from './constants/expense.constants';
+import { ExpenseCommentsService } from './expense-comments.service';
 import { GroupBalanceCacheService } from './group-balance-cache.service';
 import { computeExpenseAnalyticsFacets } from './utils/expense-facets';
 import {
   decodeExpenseFeedCursor,
   encodeExpenseFeedCursor,
 } from './utils/expense-cursor';
+import { expenseUserSnippet } from './utils/expense-user-snippet';
 import { mapSplitPayloadToComputation } from './utils/map-split-payload';
 import { assertReceiptBufferMatchesMime } from './utils/receipt-file-signature';
+import {
+  mapExpenseCategoryToTier,
+  mapExpenseSubcategoryToTier,
+} from './utils/taxonomy-display.util';
 
 const D = (x: string) => new Decimal(x);
-
-function userSnippet(u: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'>) {
-  return {
-    id: u.id,
-    name: u.name ?? null,
-    username: u.username ?? null,
-    avatar: u.avatarUrl ?? null,
-  };
-}
 
 function toMinor(major: string): string {
   return D(major).mul(100).toFixed(0);
@@ -79,6 +94,49 @@ function parseYmd(ymd: string): Date {
     throw new ExpenseSplitValidationException('invalid date');
   }
   return d;
+}
+
+function balanceBucketFromNetMajor(
+  netMajorStr: string,
+): GroupHomeBalanceBucket {
+  const x = D(netMajorStr);
+  if (x.eq(0)) return 'settled';
+  if (x.lt(0)) return 'owe';
+  return 'get_back';
+}
+
+function summarizeHomeActivity(
+  type: string,
+  actorDisplay: string | null,
+  metadata: Prisma.JsonValue,
+): string {
+  const who = actorDisplay?.trim() || 'Someone';
+  let title: string | undefined;
+  if (
+    metadata &&
+    typeof metadata === 'object' &&
+    !Array.isArray(metadata) &&
+    typeof (metadata as Record<string, unknown>)['title'] === 'string'
+  ) {
+    title = (metadata as Record<string, unknown>)['title'] as string;
+  }
+
+  switch (type) {
+    case 'expense_created':
+      return title ? `${who} added "${title}"` : `${who} added an expense`;
+    case 'expense_updated':
+      return title ? `${who} updated "${title}"` : `${who} updated an expense`;
+    case 'expense_deleted':
+      return `${who} deleted an expense`;
+    case 'expense_comment_created':
+      return `${who} commented`;
+    case 'expense_reaction_created':
+      return `${who} reacted`;
+    case 'expense_receipt_uploaded':
+      return `${who} uploaded a receipt`;
+    default:
+      return `${who} did something in this group`;
+  }
 }
 
 @Injectable()
@@ -95,21 +153,44 @@ export class ExpensesService {
     private readonly analyticsCache: GroupAnalyticsCacheService,
     private readonly activity: GroupActivityRepository,
     private readonly receipts: ReceiptStorageService,
+    private readonly expenseComments: ExpenseCommentsService,
   ) {}
 
-  async getCategoryTree(): Promise<CategoryTreeItemDto[]> {
-    return this.taxonomy.categoriesList.map((c) => ({
-      id: c.id,
-      slug: c.slug,
-      name: c.name,
-      color: c.color ?? null,
-      subcategories: c.subcategories.map((s) => ({
-        id: s.id,
-        slug: s.slug,
-        name: s.name,
-        color: s.color ?? null,
-      })),
-    }));
+  getCategoryTree(): CategoryTreeItemDto[] {
+    return this.taxonomy.categoriesList.map((c) => {
+      const catTier = mapExpenseCategoryToTier(c);
+      return {
+        id: c.id,
+        slug: c.slug,
+        name: c.name,
+        color: c.color ?? null,
+        icon: catTier.icon,
+        iconUrl: catTier.iconUrl,
+        subcategories: c.subcategories.map((s) => {
+          const st = mapExpenseSubcategoryToTier(s);
+          return {
+            id: s.id,
+            slug: s.slug,
+            name: s.name,
+            color: s.color ?? null,
+            icon: st.icon,
+            iconUrl: st.iconUrl,
+          };
+        }),
+      };
+    });
+  }
+
+  /** Maps classifier rows for **`POST …/expenses/classify`**. */
+  toExpenseCategoryDisplayDto(
+    category: ExpenseCategory | null,
+    subcategory: ExpenseSubcategory | null,
+  ): ExpenseCategoryDisplayDto | null {
+    if (!category) return null;
+    return {
+      primary: mapExpenseCategoryToTier(category),
+      secondary: subcategory ? mapExpenseSubcategoryToTier(subcategory) : null,
+    };
   }
 
   async classifyStandalone(userId: string, title: string) {
@@ -187,20 +268,131 @@ export class ExpensesService {
     return this.executeExpenseFeedQuery({ groupId }, query);
   }
 
-  async listMyExpenseFeed(
+  /**
+   * **Home screen:** joined groups enriched with balance snapshot (viewer net),
+   * counts, latest expense title, and last **`activity_logs`** row; optional **`tab`** filter.
+   */
+  async listMyGroupsHome(
     actorUserId: string,
-    query: ListExpensesQueryDto,
-  ): Promise<ExpenseFeedPageDto> {
+    tab: HomeGroupsTab = HOME_GROUPS_TAB.ALL,
+  ): Promise<MyGroupsHomePageDto> {
     await this.assertExpenseFeedActor(actorUserId);
-    const memberships = await this.prisma.groupMember.findMany({
+
+    const rows = await this.prisma.groupMember.findMany({
       where: { userId: actorUserId, status: GroupMemberStatus.active },
-      select: { groupId: true },
+      include: {
+        group: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            avatarUrl: true,
+            createdByUserId: true,
+          },
+        },
+      },
+      orderBy: { joinedAt: 'desc' },
     });
-    const groupIds = memberships.map((m) => m.groupId);
-    if (groupIds.length === 0) {
-      return { items: [], nextCursor: null };
+
+    if (rows.length === 0) {
+      return { tab, items: [] };
     }
-    return this.executeExpenseFeedQuery({ groupId: { in: groupIds } }, query);
+
+    const groupIds = rows.map((r) => r.groupId);
+
+    const [memberCounts, expenseCounts, latestExpenseMap, latestActivityMap] =
+      await Promise.all([
+        this.prisma.groupMember.groupBy({
+          by: ['groupId'],
+          where: {
+            groupId: { in: groupIds },
+            status: GroupMemberStatus.active,
+          },
+          _count: { _all: true },
+        }),
+        this.prisma.expense.groupBy({
+          by: ['groupId'],
+          where: { groupId: { in: groupIds }, deletedAt: null },
+          _count: { _all: true },
+        }),
+        this.loadLatestExpenseTitlesByGroup(groupIds),
+        this.loadLatestActivityByGroup(groupIds),
+      ]);
+
+    const memberMap = new Map(
+      memberCounts.map((m) => [m.groupId, m._count._all]),
+    );
+    const expenseMap = new Map(
+      expenseCounts.map((e) => [e.groupId, e._count._all]),
+    );
+
+    const snapshots = await Promise.all(
+      groupIds.map((gid) => this.ensureBalanceSnapshot(gid)),
+    );
+    const snapByGroupId = new Map(groupIds.map((id, i) => [id, snapshots[i]!]));
+
+    const cards: MyGroupHomeCardDto[] = rows.map((row) => {
+      const gid = row.groupId;
+      const snap = snapByGroupId.get(gid)!;
+      const viewerNetMajor = snap.netByUserId[actorUserId] ?? '0';
+      const netMinor = toMinor(viewerNetMajor);
+      const balanceBucket = balanceBucketFromNetMajor(viewerNetMajor);
+      const involvingViewer = snap.balances.filter(
+        (b) => b.fromUserId === actorUserId || b.toUserId === actorUserId,
+      );
+
+      const latestExp = latestExpenseMap.get(gid);
+      const latestAct = latestActivityMap.get(gid);
+      const actorName = latestAct?.actorDisplay ?? null;
+      const lastActivityPreview = latestAct
+        ? summarizeHomeActivity(latestAct.type, actorName, latestAct.metadata)
+        : null;
+
+      const joinedAt = row.joinedAt ?? row.createdAt;
+
+      return {
+        groupId: gid,
+        group: {
+          id: row.group.id,
+          name: row.group.name,
+          type: row.group.type,
+          avatar: row.group.avatarUrl ?? null,
+        },
+        role: row.role,
+        joinedAt: joinedAt.toISOString(),
+        isCreator: row.group.createdByUserId === actorUserId,
+        memberCount: memberMap.get(gid) ?? 0,
+        expenseCount: expenseMap.get(gid) ?? 0,
+        recentExpenseTitle: latestExp?.title ?? null,
+        balanceNetMinor: netMinor,
+        dominantCurrency: snap.dominantCurrency,
+        balanceBucket,
+        pendingSettlementCount: involvingViewer.length,
+        lastActivityAt: latestAct?.createdAt.toISOString() ?? null,
+        lastActivityType: latestAct?.type ?? null,
+        lastActivityActorName: actorName,
+        lastActivityPreview,
+        balanceUpdatedAt: snap.updatedAt,
+      };
+    });
+
+    const filtered =
+      tab === HOME_GROUPS_TAB.ALL
+        ? cards
+        : cards.filter((c) => {
+            switch (tab) {
+              case HOME_GROUPS_TAB.OWE:
+                return c.balanceBucket === 'owe';
+              case HOME_GROUPS_TAB.GET_BACK:
+                return c.balanceBucket === 'get_back';
+              case HOME_GROUPS_TAB.SETTLED:
+                return c.balanceBucket === 'settled';
+              default:
+                return true;
+            }
+          });
+
+    return { tab, items: filtered };
   }
 
   private async assertExpenseFeedActor(actorUserId: string): Promise<void> {
@@ -273,7 +465,10 @@ export class ExpensesService {
     }
 
     const where: Prisma.ExpenseWhereInput = {
-      AND: [...this.buildExpenseFeedFilters(query, groupScope), ...(cursorPred ? [cursorPred] : [])],
+      AND: [
+        ...this.buildExpenseFeedFilters(query, groupScope),
+        ...(cursorPred ? [cursorPred] : []),
+      ],
     };
 
     const orderBy: Prisma.ExpenseOrderByWithRelationInput[] =
@@ -286,7 +481,16 @@ export class ExpensesService {
       orderBy,
       take: limit + 1,
       include: {
-        paidBy: { select: { id: true, name: true, username: true, avatarUrl: true } },
+        paidBy: {
+          select: { id: true, name: true, username: true, avatarUrl: true },
+        },
+        participants: {
+          include: {
+            user: {
+              select: { id: true, name: true, username: true, avatarUrl: true },
+            },
+          },
+        },
         categoryRef: true,
         subcategoryRef: true,
       },
@@ -308,13 +512,116 @@ export class ExpensesService {
     return { items, nextCursor };
   }
 
+  /**
+   * Prefer FK **`categoryRef` / `subcategoryRef`**. If only **`subcategoryRef`** is set,
+   * derive **primary** from the subcategory’s **`categoryId`**. Otherwise resolve from legacy **`expense.category`** slug.
+   */
+  private buildExpenseCategoryDisplay(
+    e: Pick<Expense, 'category'> & {
+      categoryRef: Pick<
+        ExpenseCategory,
+        'id' | 'slug' | 'name' | 'color' | 'icon' | 'iconUrl'
+      > | null;
+      subcategoryRef: Pick<
+        ExpenseSubcategory,
+        'id' | 'slug' | 'name' | 'color' | 'icon' | 'iconUrl' | 'categoryId'
+      > | null;
+    },
+  ): ExpenseCategoryDisplayDto | null {
+    if (e.categoryRef) {
+      return {
+        primary: mapExpenseCategoryToTier(e.categoryRef),
+        secondary: e.subcategoryRef
+          ? mapExpenseSubcategoryToTier(e.subcategoryRef)
+          : null,
+      };
+    }
+    if (e.subcategoryRef) {
+      const parentCat = this.taxonomy.categoriesList.find(
+        (c) => c.id === e.subcategoryRef!.categoryId,
+      );
+      if (parentCat) {
+        return {
+          primary: mapExpenseCategoryToTier(parentCat),
+          secondary: mapExpenseSubcategoryToTier(e.subcategoryRef),
+        };
+      }
+      return null;
+    }
+    const legacySlug = e.category?.trim();
+    if (!legacySlug) {
+      return null;
+    }
+    const cat = this.taxonomy.categoriesList.find((c) => c.slug === legacySlug);
+    if (!cat) {
+      return null;
+    }
+    return {
+      primary: mapExpenseCategoryToTier(cat),
+      secondary: null,
+    };
+  }
+
+  /** Ordered **`paidBy` first**, then name; capped preview at **2** for stacked avatars + **`+N`**. */
+  private splitParticipantPreviewForFeed(
+    paidBy: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'>,
+    participants: Array<{
+      userId: string;
+      user: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'>;
+    }>,
+  ): Pick<
+    ExpenseFeedItemDto,
+    'splitParticipantPreview' | 'splitParticipantCount'
+  > {
+    const byId = new Map<
+      string,
+      Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'>
+    >();
+    for (const p of participants) {
+      byId.set(p.userId, p.user);
+    }
+    if (!byId.has(paidBy.id)) {
+      byId.set(paidBy.id, paidBy);
+    }
+
+    const orderedIds = [...byId.keys()].sort((a, b) => {
+      if (a === paidBy.id && b !== paidBy.id) return -1;
+      if (b === paidBy.id && a !== paidBy.id) return 1;
+      const ua = byId.get(a)!;
+      const ub = byId.get(b)!;
+      const la = (ua.name ?? ua.username ?? ua.id).toLowerCase();
+      const lb = (ub.name ?? ub.username ?? ub.id).toLowerCase();
+      return la.localeCompare(lb, undefined, { sensitivity: 'base' });
+    });
+
+    const snippets: ExpenseUserSnippetDto[] = orderedIds.map((id) =>
+      expenseUserSnippet(byId.get(id)!),
+    );
+
+    return {
+      splitParticipantCount: snippets.length,
+      splitParticipantPreview: snippets.slice(0, 2),
+    };
+  }
+
   private mapFeedItem(
     e: Expense & {
       paidBy: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'>;
-      categoryRef: { id: string; slug: string; name: string; color: string | null } | null;
-      subcategoryRef: { id: string; slug: string; name: string; color: string | null } | null;
+      participants: Array<{
+        userId: string;
+        user: Pick<User, 'id' | 'name' | 'username' | 'avatarUrl'>;
+      }>;
+      categoryRef: Pick<
+        ExpenseCategory,
+        'id' | 'slug' | 'name' | 'color' | 'icon' | 'iconUrl'
+      > | null;
+      subcategoryRef: Pick<
+        ExpenseSubcategory,
+        'id' | 'slug' | 'name' | 'color' | 'icon' | 'iconUrl' | 'categoryId'
+      > | null;
     },
   ): ExpenseFeedItemDto {
+    const split = this.splitParticipantPreviewForFeed(e.paidBy, e.participants);
     return {
       id: e.id,
       groupId: e.groupId,
@@ -323,27 +630,11 @@ export class ExpensesService {
       currency: e.currency,
       date: e.date.toISOString().slice(0, 10),
       createdAt: e.createdAt.toISOString(),
-      paidBy: userSnippet(e.paidBy),
+      paidBy: expenseUserSnippet(e.paidBy),
+      splitParticipantPreview: split.splitParticipantPreview,
+      splitParticipantCount: split.splitParticipantCount,
       receiptUrl: e.receiptUrl ?? null,
-      taxonomy:
-        e.categoryRef
-          ? {
-              text: {
-                id: e.categoryRef.id,
-                slug: e.categoryRef.slug,
-                name: e.categoryRef.name,
-                color: e.categoryRef.color ?? null,
-              },
-              icon: e.subcategoryRef
-                ? {
-                    id: e.subcategoryRef.id,
-                    slug: e.subcategoryRef.slug,
-                    name: e.subcategoryRef.name,
-                    color: e.subcategoryRef.color ?? null,
-                  }
-                : null,
-            }
-          : null,
+      category: this.buildExpenseCategoryDisplay(e),
     };
   }
 
@@ -452,6 +743,86 @@ export class ExpensesService {
     return snap;
   }
 
+  private async loadLatestExpenseTitlesByGroup(
+    groupIds: string[],
+  ): Promise<Map<string, { title: string }>> {
+    const out = new Map<string, { title: string }>();
+    if (groupIds.length === 0) {
+      return out;
+    }
+
+    const rows = await this.prisma.$queryRaw<
+      Array<{ groupId: string; title: string }>
+    >(Prisma.sql`
+      SELECT DISTINCT ON (e."groupId") e."groupId", e.title
+      FROM expenses e
+      WHERE e."groupId" IN (${Prisma.join(groupIds)})
+        AND e."deletedAt" IS NULL
+      ORDER BY e."groupId", e."createdAt" DESC
+    `);
+
+    for (const r of rows) {
+      out.set(r.groupId, { title: r.title });
+    }
+    return out;
+  }
+
+  private async loadLatestActivityByGroup(groupIds: string[]): Promise<
+    Map<
+      string,
+      {
+        type: string;
+        createdAt: Date;
+        metadata: Prisma.JsonValue;
+        actorDisplay: string | null;
+      }
+    >
+  > {
+    const out = new Map<
+      string,
+      {
+        type: string;
+        createdAt: Date;
+        metadata: Prisma.JsonValue;
+        actorDisplay: string | null;
+      }
+    >();
+    if (groupIds.length === 0) {
+      return out;
+    }
+
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        groupId: string;
+        type: string;
+        createdAt: Date;
+        metadata: Prisma.JsonValue;
+        actorDisplay: string | null;
+      }>
+    >(Prisma.sql`
+      SELECT DISTINCT ON (al."groupId")
+        al."groupId" AS "groupId",
+        al.type AS type,
+        al."createdAt" AS "createdAt",
+        al.metadata AS metadata,
+        COALESCE(u.name, u.username) AS "actorDisplay"
+      FROM activity_logs al
+      LEFT JOIN users u ON u.id = al."actorId"
+      WHERE al."groupId" IN (${Prisma.join(groupIds)})
+      ORDER BY al."groupId", al."createdAt" DESC
+    `);
+
+    for (const r of rows) {
+      out.set(r.groupId, {
+        type: r.type,
+        createdAt: r.createdAt,
+        metadata: r.metadata,
+        actorDisplay: r.actorDisplay,
+      });
+    }
+    return out;
+  }
+
   async getExpenseDetailWithRelations(
     actorUserId: string,
     groupId: string,
@@ -463,7 +834,7 @@ export class ExpensesService {
       throw new ExpenseNotFoundException();
     }
 
-    const [participants, comments, reactions, attachments, logs] =
+    const [participants, commentDtos, reactions, attachments, logs] =
       await Promise.all([
         this.prisma.expenseParticipant.findMany({
           where: { expenseId },
@@ -473,15 +844,10 @@ export class ExpensesService {
             },
           },
         }),
-        this.prisma.expenseComment.findMany({
-          where: { expenseId },
-          orderBy: { createdAt: 'asc' },
-          include: {
-            user: {
-              select: { id: true, name: true, username: true, avatarUrl: true },
-            },
-          },
-        }),
+        this.expenseComments.loadCommentPreviewForDetail(
+          expenseId,
+          EXPENSE_DETAIL_COMMENT_PREVIEW_LIMIT,
+        ),
         this.prisma.expenseReaction.findMany({
           where: { expenseId },
           orderBy: { createdAt: 'asc' },
@@ -514,40 +880,15 @@ export class ExpensesService {
       updatedAt: e.updatedAt.toISOString(),
       notes: e.notes ?? null,
       description: e.description ?? null,
-      paidBy: userSnippet(e.paidBy),
-      taxonomy: e.categoryRef
-        ? {
-            text: {
-              id: e.categoryRef.id,
-              slug: e.categoryRef.slug,
-              name: e.categoryRef.name,
-              color: e.categoryRef.color ?? null,
-            },
-            icon: e.subcategoryRef
-              ? {
-                  id: e.subcategoryRef.id,
-                  slug: e.subcategoryRef.slug,
-                  name: e.subcategoryRef.name,
-                  color: e.subcategoryRef.color ?? null,
-                }
-              : null,
-          }
-        : null,
+      paidBy: expenseUserSnippet(e.paidBy),
+      category: this.buildExpenseCategoryDisplay(e),
       participants: participants.map((p) => ({
         userId: p.userId,
         owedAmount: p.owedAmount.toString(),
         paidAmount: p.paidAmount.toString(),
-        user: userSnippet(p.user),
+        user: expenseUserSnippet(p.user),
       })),
     };
-
-    const commentDtos: ExpenseCommentEntryDto[] = comments.map((c) => ({
-      id: c.id,
-      userId: c.userId,
-      message: c.message,
-      createdAt: c.createdAt.toISOString(),
-      user: userSnippet(c.user),
-    }));
 
     const reactionDtos: ExpenseReactionEntryDto[] = reactions.map((r) => ({
       id: r.id,
@@ -566,7 +907,7 @@ export class ExpensesService {
     const history: ExpenseHistoryEntryDto[] = logs.map((log) => ({
       type: log.type,
       createdAt: log.createdAt.toISOString(),
-      actor: log.actor ? userSnippet(log.actor) : null,
+      actor: log.actor ? expenseUserSnippet(log.actor) : null,
       metadata: (log.metadata as Record<string, unknown>) ?? {},
     }));
 
@@ -583,55 +924,13 @@ export class ExpensesService {
     return this.prisma.expense.findFirst({
       where: { id: expenseId, groupId },
       include: {
-        paidBy: { select: { id: true, name: true, username: true, avatarUrl: true } },
+        paidBy: {
+          select: { id: true, name: true, username: true, avatarUrl: true },
+        },
         categoryRef: true,
         subcategoryRef: true,
       },
     });
-  }
-
-  async createExpenseComment(
-    actorUserId: string,
-    groupId: string,
-    expenseId: string,
-    dto: CreateExpenseCommentBodyDto,
-  ): Promise<ExpenseCommentEntryDto> {
-    await this.membershipRules.requireActiveMember(actorUserId, groupId);
-    const e = await this.prisma.expense.findFirst({
-      where: { id: expenseId, groupId },
-    });
-    if (!e || e.deletedAt) throw new ExpenseNotFoundException();
-
-    const c = await this.prisma.expenseComment.create({
-      data: {
-        expenseId,
-        userId: actorUserId,
-        message: dto.message,
-      },
-      include: {
-        user: {
-          select: { id: true, name: true, username: true, avatarUrl: true },
-        },
-      },
-    });
-
-    await this.prisma.activityLog.create({
-      data: {
-        groupId: e.groupId,
-        type: 'expense_comment_created',
-        actorId: actorUserId,
-        entityId: expenseId,
-        metadata: { commentId: c.id },
-      },
-    });
-
-    return {
-      id: c.id,
-      userId: c.userId,
-      message: c.message,
-      createdAt: c.createdAt.toISOString(),
-      user: userSnippet(c.user),
-    };
   }
 
   async createExpenseReaction(
@@ -758,43 +1057,45 @@ export class ExpensesService {
     const participantIds = [
       ...new Set(computed.participantShares.map((p) => p.userId)),
     ];
-    await this.ensureUsersActiveInGroup(groupId, [...participantIds, dto.paidByUserId]);
+    await this.ensureUsersActiveInGroup(groupId, [
+      ...participantIds,
+      dto.paidByUserId,
+    ]);
 
-    let classificationSource: ExpenseClassificationSource =
-      ExpenseClassificationSource.system;
-    let categoryId: string | undefined = dto.categoryId;
-    let subcategoryId: string | undefined = dto.subcategoryId;
-    let merchantId: string | undefined = dto.merchantId;
-
-    if (categoryId || subcategoryId) {
-      classificationSource = ExpenseClassificationSource.user;
-    } else {
-      const guess = await this.classifier.classifyStandalone(actorUserId, dto.title);
-      categoryId = guess.category?.id;
-      subcategoryId = guess.subcategory?.id ?? undefined;
-      merchantId = guess.merchant?.id ?? merchantId;
-      classificationSource =
-        guess.classificationSource ?? ExpenseClassificationSource.system;
-    }
+    const guess = await this.classifier.classifyStandalone(
+      actorUserId,
+      dto.title,
+    );
+    const categoryId = guess.category?.id;
+    const subcategoryId = guess.subcategory?.id ?? undefined;
+    const merchantId = guess.merchant?.id ?? dto.merchantId;
+    const classificationSource =
+      guess.classificationSource ?? ExpenseClassificationSource.system;
 
     if (categoryId) {
       const exists = await this.prisma.expenseCategory.findFirst({
         where: { id: categoryId, isActive: true },
       });
-      if (!exists) throw new ExpenseSplitValidationException('Unknown categoryId');
+      if (!exists)
+        throw new ExpenseSplitValidationException('Unknown categoryId');
     }
     if (subcategoryId) {
       const sub = await this.prisma.expenseSubcategory.findFirst({
         where: { id: subcategoryId },
       });
-      if (!sub) throw new ExpenseSplitValidationException('Unknown subcategoryId');
+      if (!sub)
+        throw new ExpenseSplitValidationException('Unknown subcategoryId');
       if (categoryId && sub.categoryId !== categoryId) {
-        throw new ExpenseSplitValidationException('subcategoryId does not match category');
+        throw new ExpenseSplitValidationException(
+          'subcategoryId does not match category',
+        );
       }
     }
 
     const catRow = categoryId
-      ? await this.prisma.expenseCategory.findUnique({ where: { id: categoryId } })
+      ? await this.prisma.expenseCategory.findUnique({
+          where: { id: categoryId },
+        })
       : null;
 
     const expense = await this.prisma.$transaction(async (tx) => {
@@ -816,9 +1117,9 @@ export class ExpensesService {
           subcategoryId: subcategoryId ?? null,
           merchantId: merchantId ?? null,
           classificationSource,
-          isUserClassified: classificationSource === ExpenseClassificationSource.user,
-          classifiedAt:
-            categoryId || subcategoryId ? new Date() : null,
+          isUserClassified:
+            classificationSource === ExpenseClassificationSource.user,
+          classifiedAt: categoryId || subcategoryId ? new Date() : null,
           ...facets,
         },
       });
@@ -877,7 +1178,11 @@ export class ExpensesService {
     });
 
     if (categoryId) {
-      await this.learning.bumpCategoryHit(actorUserId, categoryId, subcategoryId ?? null);
+      await this.learning.bumpCategoryHit(
+        actorUserId,
+        categoryId,
+        subcategoryId ?? null,
+      );
     }
 
     await this.analyticsCache.invalidateGroup(groupId);
@@ -924,12 +1229,19 @@ export class ExpensesService {
           'split is required when changing amount, currency, or paidByUserId',
         );
       }
-      const compInput = mapSplitPayloadToComputation(dto.split, amountStr, currency);
+      const compInput = mapSplitPayloadToComputation(
+        dto.split,
+        amountStr,
+        currency,
+      );
       const computed = this.splitService.compute(compInput);
       const participantIds = [
         ...new Set(computed.participantShares.map((p) => p.userId)),
       ];
-      await this.ensureUsersActiveInGroup(existing.groupId, [...participantIds, paidBy]);
+      await this.ensureUsersActiveInGroup(existing.groupId, [
+        ...participantIds,
+        paidBy,
+      ]);
 
       const dateOnly = dto.date ? parseYmd(dto.date) : existing.date;
       const facets = computeExpenseAnalyticsFacets(dateOnly);
@@ -1001,7 +1313,9 @@ export class ExpensesService {
     }
 
     const dateOnly = dto.date ? parseYmd(dto.date) : existing.date;
-    const facetPatch = dto.date ? computeExpenseAnalyticsFacets(dateOnly) : null;
+    const facetPatch = dto.date
+      ? computeExpenseAnalyticsFacets(dateOnly)
+      : null;
 
     const data: Prisma.ExpenseUncheckedUpdateInput = {
       title: dto.title ?? existing.title,

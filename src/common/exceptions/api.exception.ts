@@ -259,6 +259,13 @@ export class ExpenseInvalidCursorException extends ApiException {
   }
 }
 
+/** Reply rules violated — wrong expense, invalid parent, circular parent, or depth > 1. */
+export class ExpenseCommentValidationException extends ApiException {
+  constructor(message: string) {
+    super('EXPENSE_COMMENT_INVALID_PARENT', message, HttpStatus.BAD_REQUEST);
+  }
+}
+
 /** Caller is not an active member of this group (or invite still pending). */
 export class NotGroupMemberException extends ApiException {
   constructor(message = 'You are not an active member of this group.') {

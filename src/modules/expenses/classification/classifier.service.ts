@@ -83,8 +83,13 @@ export class ClassifierService {
       }
     }
 
+    const miscellaneousFallback =
+      categories.find((c) => c.slug === 'miscellaneous') ??
+      categories.find((c) => c.slug === 'misc') ??
+      null;
+
     if (!bestCat && categories.length > 0) {
-      bestCat = categories[0]!;
+      bestCat = miscellaneousFallback ?? categories[0]!;
     }
 
     const isFallback = bestScore === 0;

@@ -138,16 +138,6 @@ export class CreateExpenseBodyDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsUUID('4')
-  categoryId?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsUUID('4')
-  subcategoryId?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsUUID('4')
   merchantId?: string;
 
   @ApiPropertyOptional()

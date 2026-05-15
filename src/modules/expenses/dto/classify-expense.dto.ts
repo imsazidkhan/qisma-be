@@ -8,7 +8,15 @@ export class ClassifyExpenseBodyDto {
   title!: string;
 }
 
-export class CategoryTaxonomy {
+export class TaxonomyIconDto {
+  @ApiProperty({ enum: ['emoji', 'glyph'], description: '**glyph** = ASCII key for client icon fonts; **emoji** = literal unicode glyph.' })
+  kind!: 'emoji' | 'glyph';
+
+  @ApiProperty({ description: 'Emoji character or glyph key (e.g. **restaurant**).' })
+  value!: string;
+}
+
+export class TaxonomyTierDto {
   @ApiProperty()
   id!: string;
 
@@ -20,14 +28,21 @@ export class CategoryTaxonomy {
 
   @ApiPropertyOptional()
   color!: string | null;
+
+  @ApiPropertyOptional({ type: TaxonomyIconDto, nullable: true })
+  icon!: TaxonomyIconDto | null;
+
+  @ApiPropertyOptional({ nullable: true, description: 'Optional raster/SVG URL from taxonomy.' })
+  iconUrl!: string | null;
 }
 
-export class ClassifyTaxonomyDto {
-  @ApiProperty({ type: CategoryTaxonomy })
-  text!: CategoryTaxonomy;
+/** Feed + detail + classify: **primary** = category, **secondary** = subcategory when set. */
+export class ExpenseCategoryDisplayDto {
+  @ApiProperty({ type: TaxonomyTierDto })
+  primary!: TaxonomyTierDto;
 
-  @ApiPropertyOptional({ type: CategoryTaxonomy, nullable: true })
-  icon!: CategoryTaxonomy | null;
+  @ApiPropertyOptional({ type: TaxonomyTierDto, nullable: true })
+  secondary!: TaxonomyTierDto | null;
 }
 
 export class ClassifierMerchantResponseDto {
@@ -62,13 +77,13 @@ export class ClassificationHintsDto {
   @ApiProperty()
   shouldPromptCorrection!: boolean;
 
-  @ApiPropertyOptional({ nullable: true, type: [CategoryTaxonomy] })
-  suggestedAlternatives!: CategoryTaxonomy[] | null;
+  @ApiPropertyOptional({ nullable: true, type: [TaxonomyTierDto] })
+  suggestedAlternatives!: TaxonomyTierDto[] | null;
 }
 
 export class ClassifyExpenseResponseDto {
-  @ApiPropertyOptional({ nullable: true, type: ClassifyTaxonomyDto })
-  taxonomy!: ClassifyTaxonomyDto | null;
+  @ApiPropertyOptional({ nullable: true, type: ExpenseCategoryDisplayDto })
+  category!: ExpenseCategoryDisplayDto | null;
 
   @ApiPropertyOptional({ nullable: true, type: ClassifierMerchantResponseDto })
   merchant!: ClassifierMerchantResponseDto | null;
@@ -97,6 +112,12 @@ export class SubcategoryTreeItemDto {
 
   @ApiPropertyOptional()
   color!: string | null;
+
+  @ApiPropertyOptional({ type: TaxonomyIconDto, nullable: true })
+  icon!: TaxonomyIconDto | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  iconUrl!: string | null;
 }
 
 export class CategoryTreeItemDto {
@@ -111,6 +132,12 @@ export class CategoryTreeItemDto {
 
   @ApiPropertyOptional()
   color!: string | null;
+
+  @ApiPropertyOptional({ type: TaxonomyIconDto, nullable: true })
+  icon!: TaxonomyIconDto | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  iconUrl!: string | null;
 
   @ApiProperty({ type: [SubcategoryTreeItemDto] })
   subcategories!: SubcategoryTreeItemDto[];

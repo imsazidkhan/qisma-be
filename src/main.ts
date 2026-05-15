@@ -98,6 +98,7 @@ multi-layer rate limiting, idempotency, and audit trails.
 | \`POST\` | \`/v1/contacts/sync\` | Bearer | Sync phones (**E.164**); **registered[]** = minimal user (**id**, **name**, **username**, **avatar** only); **unregistered** = no active user |
 | \`GET\` | \`/v1/users/me/group-invites\` | Bearer | **Inbox:** pending \`group_members\` (**registered invites + offline-phone invites after OTP verify**); accept/decline \`groupId\` sources |
 | \`GET\` | \`/v1/users/me/groups\` | Bearer | **Home:** **active** memberships + slim **group** + **\`isCreator\`**; **newest \`joinedAt\` first** |
+| \`GET\` | \`/v1/users/me/groups/home\` | Bearer | **Home cards** — viewer balance (**minor**), member/expense counts, last **\`activity_logs\`**; query **\`tab\`** **all** / **owe** / **get_back** / **settled** |
 | \`GET\` | \`/v1/users/search?q=\` | Bearer | User directory: unified \`q\` (phone + username prefix + name) |
 | \`GET\` | \`/v1/groups\` | Bearer | List groups created by the current user |
 | \`GET\` | \`/v1/groups/{groupId}\` | Bearer | Single group detail (creator only); see **Groups** below |
@@ -112,13 +113,13 @@ multi-layer rate limiting, idempotency, and audit trails.
 | \`POST\` | \`/v1/groups/{groupId}/invites/decline\` | Bearer | Invitee: remove **\`pending\`** row; **\`200\`** \`data.groupId\` |
 | \`PATCH\` | \`/v1/groups/{groupId}/members/{memberId}/role\` | Bearer | **Owner only:** promote \`member\`→\`admin\` / demote \`admin\`→\`member\`; **\`200\`** roster |
 | \`POST\` | \`/v1/groups\` | Bearer | Create a user-owned group (see **Groups** below) |
-| \`POST\` | \`/v1/groups/{groupId}/expenses\` | Bearer | Create expense — split engine, **\`expense_participants\`**, **\`activity_logs\`**, **group balance snapshot** (active member) |
+| \`POST\` | \`/v1/groups/{groupId}/expenses\` | Bearer | Create expense — split engine, **\`expense_participants\`**, **\`activity_logs\`**, **group balance snapshot**; category/subcategory from **\`title\`** (body omits **\`categoryId\`** / **\`subcategoryId\`**); active member |
 | \`GET\` | \`/v1/groups/{groupId}/expenses\` | Bearer | Expense feed — **sort** (**created_at** default, **expense_date**) + **cursor**, filters (**q**, …) |
-| \`GET\` | \`/v1/me/expenses\` | Bearer | All-group expense feed (active memberships) — same query params as group feed; cursors not interchangeable |
 | \`GET\` | \`/v1/groups/{groupId}/balances\` | Bearer | Balance **view** — **\`summary\`** (headline net for **you**) + **\`balances[]\`** (edges you’re in + peer snippets) + **\`updatedAt\`** — **active member** |
-| \`GET\` | \`/v1/groups/{groupId}/expenses/{expenseId}\` | Bearer | Expense detail — **participants**, **comments**, **reactions**, **attachments**, **activity_logs** history (soft-deleted → **404**) |
+| \`GET\` | \`/v1/groups/{groupId}/expenses/{expenseId}\` | Bearer | Expense detail — **participants**, **comments** (**latest 50** preview, chronological; full list → **GET …/comments**), **reactions**, **attachments**, **activity_logs** (soft-deleted expense → **404**) |
+| \`GET\` | \`/v1/groups/{groupId}/expenses/{expenseId}/comments\` | Bearer | **List comments** — query **sort**: **asc** (default, oldest first, cursor loads newer) or **desc** (newest first, cursor loads older); **ExpenseCommentPageDto**; cursor base64url payload **v:1, c, i, p, s** (legacy omit **s** ⇒ asc only); active member |
+| \`POST\` | \`/v1/groups/{groupId}/expenses/{expenseId}/comments\` | Bearer | **Create comment** — optional **\`parentCommentId\`** (reply depth ≤ 1); **\`201\`** **\`ExpenseCommentEntryDto\`**; **\`activity_logs\`** (**\`expense_comment_created\`**) |
 | \`POST\` | \`/v1/groups/{groupId}/expenses/{expenseId}/reclassify\` | Bearer | Reclassify (**\`categorySlug\`** / **\`subcategorySlug\`**) — **\`activity_logs\`**, taxonomy learning; active member (**404** if **groupId** does not own expense) |
-| \`POST\` | \`/v1/groups/{groupId}/expenses/{expenseId}/comments\` | Bearer | Add comment — **\`expense_comments\`** + **\`activity_logs\`** (**\`expense_comment_created\`**); active member |
 | \`POST\` | \`/v1/groups/{groupId}/expenses/{expenseId}/reactions\` | Bearer | Add emoji reaction — **\`expense_reactions\`**, **\`activity_logs\`** (**\`expense_reaction_created\`**); **201** new / **200** idempotent; active member |
 | \`POST\` | \`/v1/groups/{groupId}/expenses/{expenseId}/receipts\` | Bearer | Upload receipt (**multipart** **\`file\`**) — **\`RECEIPT_STORAGE\`** **local** or **S3/R2** ; **\`expense_attachments\`**, **\`activity_logs\`** (**\`expense_receipt_uploaded\`**) |
 | \`PATCH\` | \`/v1/groups/{groupId}/expenses/{expenseId}\` | Bearer | Update expense — optional **\`expectedUpdatedAt\`** (**409** if stale); recompute splits, participants, balances (**\`split\`** required if **amount**/**paidBy** change) |
@@ -129,6 +130,8 @@ multi-layer rate limiting, idempotency, and audit trails.
 **\`GET /v1/users/me/group-invites\`:** **Bearer** JSON — **pending** **\`group_members\`** (**registered-target invites plus rows materialized from \`group_invites\` at first OTP verify**). **\`\`PendingGroupInviteEntryDto[]\`\`:** **\`groupId\`**, **\`groupName\`**, **\`groupAvatar\`**, **\`groupType\`**, **\`role\`**, **\`invitedAt\`**, **\`invitedBy\`** (**\`addedBy\`** user snippet, or **\`null\`**). Sorted **newest \`createdAt\` first**; **\`[]\`** when none. **Raw \`group_invites\`** table rows **before** signup are **not** listed (**no JWT**). **\`403 ACCOUNT_INACTIVE\`**, **\`404 USER_NOT_FOUND\`**.
 
 **\`GET /v1/users/me/groups\`:** **Bearer** JSON — **\`active\`** **\`group_members\`** only (joined groups **home** screen). **\`\`MyGroupRowDto[]\`\`:** **\`groupId\`**, nested **\`group\`** (**\`id\`**, **\`name\`**, **\`type\`**, **\`avatar\`**), **\`role\`**, **\`joinedAt\`**, **\`isCreator\`**. Sorted **newest \`joinedAt\` first**. **\`[]\`** if you belong to no groups yet. **Not** the same as **\`GET /v1/groups\`** (creator-only list).
+
+**\`GET /v1/users/me/groups/home\`:** **Bearer** JSON — **\`MyGroupsHomePageDto\`**: **\`tab\`** echo (**\`all\`**, **\`owe\`**, **\`get_back\`**, **\`settled\`**) + **\`items[]\`** enriched cards (**\`balanceNetMinor\`**, **\`balanceBucket\`**, **\`memberCount\`**, **\`expenseCount\`**, **\`recentExpenseTitle\`**, **\`lastActivity*\`**, **\`pendingSettlementCount\`**). Filters server-side by viewer net vs zero (same basis as **\`GET /v1/groups/{groupId}/balances\`**). **\`400 VALIDATION_ERROR\`** bad **\`tab\`**; **\`403 ACCOUNT_INACTIVE\`**, **\`404 USER_NOT_FOUND\`**.
 
 **\`GET /v1/users/search?q=\`:** **Bearer** JSON. **\`q\`** (**2–96** chars) is matched as **OR**: full **E.164-style** number → exact **\`User.identifier\`**; leading \`[a-z0-9_]\` (after optional \`@\`) → **username prefix** if length ≥ **2**; plus **always** case-insensitive **contains** on **\`User.name\`** (non-null names). **≤20** hits, ordered **name** then **id**. Success **\`200\`:** **\`\`UserSearchHitDto[]\`\`** (**\`id\`**, **\`name\`**, **\`username\`**, **\`avatar\`**) — **never** echoes raw phone; **caller excluded**; **inactive** omitted. **\`400\`** if \`q\` invalid / length violations.
 
@@ -295,9 +298,12 @@ multi-layer rate limiting, idempotency, and audit trails.
     .addTag('Auth', 'Token refresh, logout, current user, profile update')
     .addTag(
       'Users',
-      'Joined groups home (`GET /v1/users/me/groups`) + pending invites inbox (`GET /v1/users/me/group-invites`) + directory search (`GET /v1/users/search`)',
+      'Joined groups (`GET /v1/users/me/groups`) + home cards (`GET /v1/users/me/groups/home`) + pending invites inbox (`GET /v1/users/me/group-invites`) + directory search (`GET /v1/users/search`)',
     )
-    .addTag('Upload', 'Multipart uploads (avatar; expense receipts use **Expenses** → **`POST …/groups/{groupId}/expenses/{expenseId}/receipts`**)')
+    .addTag(
+      'Upload',
+      'Multipart uploads (avatar; expense receipts use **Expenses** → **`POST …/groups/{groupId}/expenses/{expenseId}/receipts`**)',
+    )
     .addTag(
       'Contacts',
       'Device phones sync (`POST /v1/contacts/sync`) — E.164 parse; **registered** users: **id**, **name**, **username**, **avatar** only; **unregistered** = no active user; Redis limits',

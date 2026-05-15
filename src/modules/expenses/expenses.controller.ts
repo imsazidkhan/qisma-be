@@ -37,34 +37,41 @@ import type { ApiSuccessResponse } from '../../common/interfaces/api-response.in
 import { UnauthorizedException } from '../../common/exceptions/api.exception';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
-  CategoryTaxonomy,
   CategoryTreeItemDto,
   ClassifyExpenseBodyDto,
   ClassifyExpenseResponseDto,
+  ExpenseCategoryDisplayDto,
   ReclassifyExpenseBodyDto,
   ReclassifyExpenseResponseDto,
+  SubcategoryTreeItemDto,
+  TaxonomyIconDto,
+  TaxonomyTierDto,
 } from './dto/classify-expense.dto';
 import { CreateExpenseBodyDto } from './dto/create-expense.dto';
 import { CreateExpenseCommentBodyDto } from './dto/create-expense-comment.dto';
 import { CreateExpenseReactionBodyDto } from './dto/create-expense-reaction.dto';
 import {
-  ExpenseTaxonomyDisplayDto,
   ExpenseAttachmentEntryDto,
   ExpenseCommentEntryDto,
+  ExpenseCommentPageDto,
   ExpenseDetailWithRelationsDto,
   ExpenseFeedItemDto,
   ExpenseFeedPageDto,
   ExpenseMutationResponseDto,
   ExpenseReactionEntryDto,
+  ExpenseUserSnippetDto,
   GroupBalanceLineDto,
   GroupBalanceSnapshotDto,
   GroupBalanceSummaryDto,
   GroupBalanceViewDto,
   GroupBalanceViewerUserDto,
 } from './dto/expense-responses.dto';
+import { ListExpenseCommentsQueryDto } from './dto/list-expense-comments-query.dto';
 import { ListExpensesQueryDto } from './dto/list-expenses-query.dto';
 import { PatchExpenseBodyDto } from './dto/patch-expense.dto';
+import { ExpenseCommentsService } from './expense-comments.service';
 import { ExpensesService } from './expenses.service';
+import { mapExpenseCategoryToTier } from './utils/taxonomy-display.util';
 
 /** Hard cap for multipart **file** (aligns with env **RECEIPT_MAX_BYTES** max of 20 MB). */
 const RECEIPT_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
@@ -91,12 +98,16 @@ function authContextOrThrow(req: Request): { userId: string } {
   ApiErrorDto,
   CreateExpenseBodyDto,
   CreateExpenseCommentBodyDto,
+  ListExpenseCommentsQueryDto,
   ExpenseMutationResponseDto,
   ListExpensesQueryDto,
   ExpenseFeedPageDto,
   ExpenseFeedItemDto,
-  CategoryTaxonomy,
-  ExpenseTaxonomyDisplayDto,
+  ExpenseUserSnippetDto,
+  ExpenseCommentPageDto,
+  TaxonomyIconDto,
+  TaxonomyTierDto,
+  ExpenseCategoryDisplayDto,
   ExpenseDetailWithRelationsDto,
   ExpenseCommentEntryDto,
   ExpenseReactionEntryDto,
@@ -109,21 +120,26 @@ function authContextOrThrow(req: Request): { userId: string } {
   GroupBalanceViewerUserDto,
   ClassifyExpenseBodyDto,
   ClassifyExpenseResponseDto,
+  ReclassifyExpenseBodyDto,
   ReclassifyExpenseResponseDto,
   CategoryTreeItemDto,
+  SubcategoryTreeItemDto,
 )
 @Controller()
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth('access-token')
 export class ExpensesController {
-  constructor(private readonly expenses: ExpensesService) {}
+  constructor(
+    private readonly expenses: ExpensesService,
+    private readonly expenseComments: ExpenseCommentsService,
+  ) {}
 
   @Post('expenses/classify')
   @Throttle({ default: { limit: 45, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      'Suggest taxonomy (text=category label, icon=sub slug) / merchant / tags from a title',
+      'Suggest category (**primary**/**secondary**) / merchant / tags from a title (**secondary** = subcategory)',
   })
   @ApiOkResponse({ type: ClassifyExpenseResponseDto })
   async classifyExpense(
@@ -133,24 +149,7 @@ export class ExpensesController {
     const { userId } = authContextOrThrow(req);
     const r = await this.expenses.classifyStandalone(userId, body.title);
     const data: ClassifyExpenseResponseDto = {
-      taxonomy: r.category
-        ? {
-            text: {
-              id: r.category.id,
-              slug: r.category.slug,
-              name: r.category.name,
-              color: r.category.color ?? null,
-            },
-            icon: r.subcategory
-              ? {
-                  id: r.subcategory.id,
-                  slug: r.subcategory.slug,
-                  name: r.subcategory.name,
-                  color: r.subcategory.color ?? null,
-                }
-              : null,
-          }
-        : null,
+      category: this.expenses.toExpenseCategoryDisplayDto(r.category, r.subcategory),
       merchant: r.merchant
         ? {
             id: r.merchant.id,
@@ -167,12 +166,8 @@ export class ExpensesController {
       classification: {
         isFallback: r.isFallback,
         shouldPromptCorrection: r.shouldPromptCorrection,
-        suggestedAlternatives: r.suggestedAlternatives?.map((c) => ({
-          id: c.id,
-          slug: c.slug,
-          name: c.name,
-          color: c.color ?? null,
-        })) ?? null,
+        suggestedAlternatives:
+          r.suggestedAlternatives?.map((c) => mapExpenseCategoryToTier(c)) ?? null,
       },
     };
     return { success: true, data };
@@ -207,7 +202,7 @@ export class ExpensesController {
   @ApiOperation({
     summary: 'Get all categories with subcategories',
     description:
-      'Each category includes **`subcategories`** (id, slug, name, color) sorted by **name**. Clients map **`slug`** to icons.',
+      'Each category includes **`subcategories`** (id, slug, name, color, structured **`icon`**, **`iconUrl`**) sorted by **name**. **`icon.kind`** is **glyph** (ASCII key) or **emoji**.',
   })
   @ApiOkResponse({ type: [CategoryTreeItemDto] })
   async getCategories(
@@ -235,22 +230,6 @@ export class ExpensesController {
     return { success: true, data };
   }
 
-  @Get('me/expenses')
-  @ApiOperation({
-    summary: 'List my expenses across all active group memberships',
-    description:
-      'Includes expenses from every group where you are an **active** member. Use **sort** + **cursor** like the group feed.',
-  })
-  @ApiOkResponse({ type: ExpenseFeedPageDto })
-  async listMyExpenses(
-    @Req() req: Request,
-    @Query() query: ListExpensesQueryDto,
-  ): Promise<ApiSuccessResponse<ExpenseFeedPageDto>> {
-    const { userId } = authContextOrThrow(req);
-    const data = await this.expenses.listMyExpenseFeed(userId, query);
-    return { success: true, data };
-  }
-
   @Get('groups/:groupId/balances')
   @ApiOperation({
     summary: 'Group balance view (viewer-centric)',
@@ -271,7 +250,7 @@ export class ExpensesController {
   @ApiOperation({
     summary: 'Get expense detail',
     description:
-      'Get expense detail (participants, comments, reactions, attachments, history)',
+      'Participants, **comments** (latest preview only — full history via **GET …/comments**), reactions, attachments, activity history',
   })
   @ApiParam({ name: 'groupId', format: 'uuid' })
   @ApiParam({ name: 'expenseId', format: 'uuid' })
@@ -290,23 +269,62 @@ export class ExpensesController {
     return { success: true, data };
   }
 
+  @Get('groups/:groupId/expenses/:expenseId/comments')
+  @ApiOperation({
+    summary: 'List expense comments (paginated)',
+    description: [
+      '**`sort`** (optional): **`asc`** (default) — chronological oldest→newest; first page starts at oldest messages, **`cursor`** loads newer.',
+      '**`sort=desc`** — newest first (chat / inverted list); first page has latest messages, **`cursor`** loads **older**.',
+      '',
+      '**Top-level:** omit `parentCommentId` — only rows where `parentCommentId` is null.',
+      '**Replies:** set `parentCommentId` to the root comment id.',
+      '',
+      '**Cursor:** pass previous `data.nextCursor` as `cursor`. Payload is **base64url** JSON: `{ "v": 1, "c": "<ISO8601 createdAt>", "i": "<comment uuid>", "p": "<parent uuid>|null", "s": "asc"|"desc" }`.',
+      'Legacy cursors omit `s` and only work with **`sort=asc`**. The `p` field must match this request’s `parentCommentId` query.',
+      'Malformed or mismatched cursor → **400** `INVALID_EXPENSE_CURSOR`.',
+    ].join('\n'),
+  })
+  @ApiParam({ name: 'groupId', format: 'uuid' })
+  @ApiParam({ name: 'expenseId', format: 'uuid' })
+  @ApiOkResponse({ type: ExpenseCommentPageDto })
+  async listComments(
+    @Req() req: Request,
+    @Param('groupId', ParseUUIDPipe) groupId: string,
+    @Param('expenseId', ParseUUIDPipe) expenseId: string,
+    @Query() query: ListExpenseCommentsQueryDto,
+  ): Promise<ApiSuccessResponse<ExpenseCommentPageDto>> {
+    const { userId } = authContextOrThrow(req);
+    const data = await this.expenseComments.listComments(
+      userId,
+      groupId,
+      expenseId,
+      query,
+    );
+    return { success: true, data };
+  }
+
   @Post('groups/:groupId/expenses/:expenseId/comments')
-  @ApiOperation({ summary: 'Add expense comment (active group member)' })
+  @ApiOperation({
+    summary: 'Add expense comment (active group member)',
+    description:
+      'Optional **`parentCommentId`** — reply to a **top-level** comment only (depth ≤ 1). Omit for a root comment.',
+  })
   @ApiParam({ name: 'groupId', format: 'uuid' })
   @ApiParam({
     name: 'expenseId',
     format: 'uuid',
     description: 'Expense id',
   })
+  @ApiBody({ type: CreateExpenseCommentBodyDto })
   @ApiCreatedResponse({ type: ExpenseCommentEntryDto })
-  async createExpenseComment(
+  async createComment(
     @Req() req: Request,
     @Param('groupId', ParseUUIDPipe) groupId: string,
     @Param('expenseId', ParseUUIDPipe) expenseId: string,
     @Body() body: CreateExpenseCommentBodyDto,
   ): Promise<ApiSuccessResponse<ExpenseCommentEntryDto>> {
     const { userId } = authContextOrThrow(req);
-    const data = await this.expenses.createExpenseComment(
+    const data = await this.expenseComments.createComment(
       userId,
       groupId,
       expenseId,
@@ -402,6 +420,8 @@ export class ExpensesController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Create group expense (split engine + activity log + balances)',
+    description:
+      '**Category** and **subcategory** are inferred from **`title`** only (server classifier); **`categoryId`** / **`subcategoryId`** are not accepted on create. Adjust later via **`PATCH`** or **`POST …/reclassify`.',
   })
   @ApiCreatedResponse({ type: ExpenseMutationResponseDto })
   async createExpense(
