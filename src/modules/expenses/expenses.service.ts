@@ -807,7 +807,7 @@ export class ExpensesService {
         al.metadata AS metadata,
         COALESCE(u.name, u.username) AS "actorDisplay"
       FROM activity_logs al
-      LEFT JOIN users u ON u.id = al."actorId"
+      LEFT JOIN "User" u ON u.id = al."actorId"
       WHERE al."groupId" IN (${Prisma.join(groupIds)})
       ORDER BY al."groupId", al."createdAt" DESC
     `);
