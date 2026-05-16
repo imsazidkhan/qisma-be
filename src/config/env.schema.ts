@@ -72,6 +72,22 @@ const envShape = z.object({
       (url) => url.startsWith('postgresql://') || url.startsWith('postgres://'),
       'DATABASE_URL must be a valid PostgreSQL connection string',
     ),
+  /**
+   * Direct Postgres URL for **`prisma migrate`** only (Neon **non-pooler** host).
+   * Poolers break **`pg_advisory_lock`** → **`P1002`**. Optional; when unset,
+   * migrations use **`DATABASE_URL`** (fine for local / non-pooled URLs).
+   */
+  DIRECT_DATABASE_URL: z
+    .string()
+    .optional()
+    .refine(
+      (url) =>
+        url === undefined ||
+        url.trim().length === 0 ||
+        url.startsWith('postgresql://') ||
+        url.startsWith('postgres://'),
+      'DIRECT_DATABASE_URL must be a PostgreSQL connection string',
+    ),
 
   // ─── Redis ───────────────────────────────────────────────────
   /** Hostname only (e.g. **`xxx.upstash.io`**). No **`http(s)://`**, **`redis-cli`**, or **`redis://` / `rediss://` URLs**. TLS = **`REDIS_TLS`**. */
@@ -104,6 +120,20 @@ const envShape = z.object({
    * works — Node may be trying IPv6 first while only IPv4 routes succeed.
    */
   REDIS_FAMILY: z.enum(['4', '6']).optional(),
+
+  // ─── Dev-only: log controller return values ──────────────────
+  /**
+   * **`false`** / **`0`** / **`no`** → off. **`true`** / **`1`** → on.
+   * When unset in **`development`**, response logging defaults **on** (stdout). Always off in **`production`**.
+   */
+  LOG_RESPONSE_BODY: z.string().optional(),
+  /**
+   * Max characters per response when logging is on. Omit or **`0`** = full body up to an internal cap (~10 MiB).
+   */
+  LOG_RESPONSE_BODY_MAX_CHARS: z.preprocess(
+    (v) => (v === '' || v === undefined ? undefined : v),
+    z.coerce.number().int().nonnegative().optional(),
+  ),
 
   // ─── JWT ─────────────────────────────────────────────────────
   // Secrets MUST be strong. We enforce a minimum length and explicitly

@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
@@ -19,6 +19,7 @@ import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { ContactsModule } from './modules/contacts/contacts.module';
 import { ExpensesModule } from './modules/expenses/expenses.module';
 import { SplitsModule } from './modules/splits/splits.module';
+import { LogApiResponseInterceptor } from './common/interceptors/log-api-response.interceptor';
 
 @Module({
   imports: [
@@ -58,6 +59,10 @@ import { SplitsModule } from './modules/splits/splits.module';
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: LogApiResponseInterceptor,
     },
   ],
 })

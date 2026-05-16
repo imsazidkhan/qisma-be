@@ -119,7 +119,8 @@ All three offer free tiers suitable for development and low-traffic production.
 |---|---|---|
 | `NODE_ENV` | No | `development` \| `production` \| `test` |
 | `PORT` | No | Server port (default `3000`) |
-| `DATABASE_URL` | **Yes** | PostgreSQL connection string |
+| `DATABASE_URL` | **Yes** | PostgreSQL connection string (Neon **pooled** URL is OK for the app) |
+| `DIRECT_DATABASE_URL` | No | Neon **direct** (non-pooler) URL for `prisma migrate deploy`. Required when `DATABASE_URL` uses a pooler host — avoids **`P1002`** advisory-lock timeouts. |
 | `REDIS_HOST` | **Yes** | Redis hostname |
 | `REDIS_PORT` | **Yes** | Redis port (default `6379`) |
 | `REDIS_PASSWORD` | No | Redis auth password |

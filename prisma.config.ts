@@ -9,24 +9,26 @@ config();
 // Prisma 7 requires `datasource.url` to be present in this config file
 // (it can no longer live in `schema.prisma`). At build time (`prisma generate`)
 // the URL is unused, so we fall back to a placeholder to keep the build happy.
-// At runtime (`prisma migrate deploy`), the real DATABASE_URL must be provided
-// by the deployment platform (Render, Railway, etc.) — if it's missing, we
-// fail loudly instead of silently using the placeholder.
-const runtimeUrl = process.env['DATABASE_URL'];
+//
+// **`prisma migrate deploy`** uses this URL. Neon / Supabase **poolers** (PgBouncer
+// transaction mode) often **cannot acquire advisory locks** → `P1002` timeouts.
+// Set **`DIRECT_DATABASE_URL`** to Neon's **direct** (non-pooler) connection string;
+// the Nest app still uses **`DATABASE_URL`** (pooled) via `PrismaService`.
+const migrateConnectionUrl =
+  process.env['DIRECT_DATABASE_URL']?.trim() ||
+  process.env['DATABASE_URL'];
 const isBuildTime = process.env['PRISMA_GENERATE_BUILD'] === '1';
 
-if (!runtimeUrl && !isBuildTime) {
+if (!migrateConnectionUrl && !isBuildTime) {
   const msg =
-    'DATABASE_URL is not set. Configure it in your deployment platform ' +
-    '(Render Environment tab) or in .env for local development.';
-  // Force-flush to stderr so the platform log stream captures it before
-  // Prisma CLI wraps/suppresses the error in its own message.
+    'DATABASE_URL is not set (or DIRECT_DATABASE_URL for migrations). ' +
+    'Configure in your deployment platform or .env for local development.';
   process.stderr.write(`\n[prisma.config] FATAL: ${msg}\n\n`);
   throw new Error(msg);
 }
 
 const databaseUrl =
-  runtimeUrl ??
+  migrateConnectionUrl ??
   'postgresql://placeholder:placeholder@placeholder:5432/placeholder';
 
 export default defineConfig({

@@ -61,8 +61,13 @@ export function buildLoggerConfig(nodeEnv: string): Params {
       },
 
       // ─── Message formatting ────────────────────────────────────
-      customSuccessMessage: (req, res) => {
-        return `${req.method ?? 'GET'} ${req.url ?? ''} ${res.statusCode}`;
+      customSuccessMessage: (req, res, responseTime) => {
+        const ms = typeof responseTime === 'number' ? ` ${responseTime}ms` : '';
+        const id =
+          typeof (req as IncomingMessage & { id?: string }).id === 'string'
+            ? ` [${(req as IncomingMessage & { id: string }).id}]`
+            : '';
+        return `${req.method ?? 'GET'} ${req.url ?? ''} ${res.statusCode}${ms}${id}`;
       },
       customErrorMessage: (req, res, err) => {
         return `${req.method ?? 'GET'} ${req.url ?? ''} ${res.statusCode} — ${err.message}`;
@@ -79,7 +84,7 @@ export function buildLoggerConfig(nodeEnv: string): Params {
                 colorize: true,
                 translateTime: 'SYS:HH:MM:ss.l',
                 ignore: 'pid,hostname,req,res,responseTime',
-                messageFormat: '{msg} {if req}[{req.id}]{end}',
+                messageFormat: '{msg}',
               },
             },
           }),
